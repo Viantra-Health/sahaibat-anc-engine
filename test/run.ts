@@ -187,6 +187,48 @@ eq(shouldRefer(generateClinicalFlags(base({ gestationalWeeks: 36, presentation: 
    'malpresentation refers, but is urgent not emergency');
 ok(shouldRefer(generateClinicalFlags(base({ labHb: 7 }))).reasons.length > 0, 'referral carries its reasons');
 
+// ═══ Indonesian number and vocabulary handling ═══════════════════════════════
+// Indonesia writes decimals with a comma. Before this, every numeric regex
+// accepted only a dot, so a midwife writing her numbers the ordinary way had
+// them silently truncated — and on LILA that truncation crossed a clinical
+// threshold and diagnosed KEK on a mother who did not have it.
+
+const comma = (t: string) => parseAncData(t, 28);
+
+eq(comma('lila 23,5').lilaCm, 23.5, 'LILA: comma decimal is read, not truncated');
+eq(comma('lila 23.5').lilaCm, 23.5, 'LILA: dot decimal still works');
+ok(!has(generateClinicalFlags(base({ lilaCm: comma('lila 23,5').lilaCm! })), 'KEK'),
+   'LILA 23,5 is NOT KEK — the bug this test exists to prevent');
+ok(has(generateClinicalFlags(base({ lilaCm: comma('lila 23,4').lilaCm! })), 'KEK'),
+   'LILA 23,4 IS KEK — the threshold still bites just below it');
+
+eq(comma('bb 58,5').t1WeightKg, 58.5, 'weight: comma decimal survives');
+eq(comma('hb 10,5').t6LabHb, 10.5, 'Hb: comma decimal survives');
+eq(comma('gds 145,5').bloodSugarMg, 145.5, 'blood sugar: comma decimal survives');
+eq(comma('tfu 26,5').t3FundalHeightCm, 26.5, 'fundal height: accepts a decimal at all');
+eq(comma('tb ibu 155,5').motherHeightCm, 155.5, 'mother height: comma decimal survives');
+
+// Hb 7,5 must still be severe anaemia — a truncation to 7 would have passed
+// this by luck, so assert the value as well as the flag.
+eq(comma('hb 7,5').t6LabHb, 7.5, 'Hb 7,5 parses exactly');
+ok(has(generateClinicalFlags(base({ labHb: comma('hb 7,5').t6LabHb! })), 'SEVERE_ANAEMIA'),
+   'Hb 7,5 is still severe anaemia');
+
+// Vocabulary midwives actually use.
+eq(comma('tensi 140/90').t2BpSystolic, 140, 'BP: "tensi" is understood, not just "TD"');
+eq(comma('tensi 140/90').t2BpDiastolic, 90, 'BP: "tensi" diastolic too');
+eq(comma('timbang 60').t1WeightKg, 60, 'weight: "timbang" — the T in 10T');
+
+// TTD (Tablet Tambah Darah) is the standard Indonesian term for iron tablets.
+// `tt` had no word boundary, so "TTD 90" was read as tetanus status "d" and
+// the iron count was lost entirely.
+eq(comma('ttd 90').t5FeTablets, 90, 'Fe: "TTD 90" is ninety iron tablets');
+eq(comma('ttd 90').t4TtStatus, null, 'Fe: "TTD 90" is NOT a tetanus status');
+eq(comma('tt2, fe 90').t4TtStatus, '2', 'tetanus: real TT status still parses');
+eq(comma('tt lengkap').t4TtStatus, 'lengkap', 'tetanus: worded status still parses');
+eq(comma('tetanus lengkap, ttd 90').t5FeTablets, 90,
+   'tetanus and TTD in one message: both are read, neither eats the other');
+
 // ═══ report ══════════════════════════════════════════════════════════════════
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 if (failures.length) {

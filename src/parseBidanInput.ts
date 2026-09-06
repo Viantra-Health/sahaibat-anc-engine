@@ -3,6 +3,24 @@
 // Handles Indonesian clinical abbreviations and natural language input
 // v2: Added mother height (TB ibu), LILA, DJJ, blood type, BMI calc
 
+/**
+ * Indonesian writes decimals with a comma: 23,5 — not 23.5.
+ *
+ * Every numeric pattern below therefore accepts BOTH separators, and every
+ * captured number goes through here. Before this existed the regexes accepted
+ * only a dot, so "LILA 23,5" captured "23" and the mother was flagged KEK
+ * (< 23.5 cm) on a number she did not have. Half a kilo vanished from every
+ * "BB 58,5" the same way.
+ *
+ * Use this for every numeric capture. There is no reason to call parseFloat
+ * directly in this file.
+ */
+function num(raw: string | undefined): number | null {
+  if (raw == null) return null;
+  const v = parseFloat(raw.replace(',', '.'));
+  return Number.isFinite(v) ? v : null;
+}
+
 export interface ParsedAncInit {
   visitType: string;        // 'K1' through 'K6'
   motherName: string;
@@ -95,31 +113,34 @@ export function parseAncData(message: string): ParsedAncData {
   };
 
   // T1: Weight - "BB 58" or "BB: 58" or "berat 58"
-  const bbMatch = textLower.match(/(?:bb|berat\s*badan|berat)\s*:?\s*(\d{2,3}(?:\.\d)?)/);
-  if (bbMatch) result.t1WeightKg = parseFloat(bbMatch[1]);
+  const bbMatch = textLower.match(/\b(?:bb|berat\s*badan|berat|timbang)\s*:?\s*(\d{2,3}(?:[.,]\d{1,2})?)/);
+  if (bbMatch) result.t1WeightKg = num(bbMatch[1]);
 
   // T2: Blood pressure - "TD 140/90" or "tekanan darah 140/90"
-  const tdMatch = textLower.match(/(?:td|tekanan\s*darah)\s*:?\s*(\d{2,3})\s*[\/]\s*(\d{2,3})/);
+  const tdMatch = textLower.match(/\b(?:td|tensi|tekanan\s*darah)\s*:?\s*(\d{2,3})\s*[\/]\s*(\d{2,3})/);
   if (tdMatch) {
     result.t2BpSystolic = parseInt(tdMatch[1]);
     result.t2BpDiastolic = parseInt(tdMatch[2]);
   }
 
   // T3: Fundal height - "TFU 26" or "fundus 26"
-  const tfuMatch = textLower.match(/(?:tfu|fundus|tinggi\s*fundus)\s*:?\s*(\d{1,2})/);
-  if (tfuMatch) result.t3FundalHeightCm = parseInt(tfuMatch[1]);
+  const tfuMatch = textLower.match(/\b(?:tfu|fundus|tinggi\s*fundus)\s*:?\s*(\d{1,2}(?:[.,]\d)?)/);
+  if (tfuMatch) result.t3FundalHeightCm = num(tfuMatch[1]);
 
   // T4: TT status - "TT lengkap" or "TT2+"
-  const ttMatch = textLower.match(/(?:tt|tetanus)\s*:?\s*([\w+]+)/);
+  // \b...\b around `tt` so "TTD 90" (Tablet Tambah Darah = iron) is not read
+  // as tetanus status "d". Without the boundary `tt` matched the first two
+  // letters of TTD and captured whatever followed.
+  const ttMatch = textLower.match(/\b(?:tt(?!d)|tetanus)\s*:?\s*([\w+]+)/);
   if (ttMatch) result.t4TtStatus = ttMatch[1];
 
   // T5: Fe tablets - "Fe 30" or "tablet fe 30"
-  const feMatch = textLower.match(/(?:fe|tablet\s*fe|zat\s*besi)\s*:?\s*(\d{1,3})\s*(?:tablet)?/);
+  const feMatch = textLower.match(/\b(?:fe|tablet\s*fe|zat\s*besi|ttd|tablet\s*tambah\s*darah)\b\s*:?\s*(\d{1,3})\s*(?:tablet)?/);
   if (feMatch) result.t5FeTablets = parseInt(feMatch[1]);
 
   // T6: Lab - Hb
-  const hbMatch = textLower.match(/(?:hb|haemoglobin|hemoglobin)\s*:?\s*(\d{1,2}(?:\.\d{1,2})?)/);
-  if (hbMatch) result.t6LabHb = parseFloat(hbMatch[1]);
+  const hbMatch = textLower.match(/\b(?:hb|haemoglobin|hemoglobin)\s*:?\s*(\d{1,2}(?:[.,]\d{1,2})?)/);
+  if (hbMatch) result.t6LabHb = num(hbMatch[1]);
 
   // T6: Lab - Protein
   const protMatch = textLower.match(/(?:protein|proteinuria)\s*:?\s*([+-]?\+{0,3}|\d)/);
@@ -160,16 +181,16 @@ export function parseAncData(message: string): ParsedAncData {
   if (keluhanMatch) result.complaints = keluhanMatch[1].trim();
 
   // ── NEW: Mother Height - "TB ibu 155" or "Tinggi ibu 155" or "TB 155 cm" ──
-  const tbIbuMatch = textLower.match(/(?:tb\s*ibu|tinggi\s*ibu|tinggi\s*badan\s*ibu|tb)\s*:?\s*(\d{2,3}(?:\.\d)?)\s*(?:cm)?/);
+  const tbIbuMatch = textLower.match(/\b(?:tb\s*ibu|tinggi\s*ibu|tinggi\s*badan\s*ibu|tb)\b\s*:?\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:cm)?/);
   if (tbIbuMatch) {
-    const h = parseFloat(tbIbuMatch[1]);
+    const h = num(tbIbuMatch[1]) ?? 0;
     // Disambiguate: TB ibu is always >100cm. If someone types "TB 26" that's TFU not height.
     if (h > 100) result.motherHeightCm = h;
   }
 
   // ── NEW: LILA - "LILA 23" or "LILA: 25.5" or "lila 22 cm" ──
-  const lilaMatch = textLower.match(/(?:lila|muac|lingkar\s*lengan)\s*:?\s*(\d{1,2}(?:\.\d)?)\s*(?:cm)?/);
-  if (lilaMatch) result.lilaCm = parseFloat(lilaMatch[1]);
+  const lilaMatch = textLower.match(/\b(?:lila|muac|lingkar\s*lengan(?:\s*atas)?)\s*:?\s*(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:cm)?/);
+  if (lilaMatch) result.lilaCm = num(lilaMatch[1]);
 
   // ── NEW: DJJ (Fetal Heart Rate) - "DJJ 142" or "djj: 148 bpm" ──
   const djjMatch = textLower.match(/(?:djj|denyut\s*jantung|fetal\s*hr|fhr)\s*:?\s*(\d{2,3})\s*(?:bpm|x\/mnt)?/);
@@ -206,8 +227,8 @@ export function parseAncData(message: string): ParsedAncData {
   }
 
   // ── PHASE A: Blood sugar - "GDS 145" or "gula darah 120" or "GDA 98" ──
-  const gdMatch = textLower.match(/(?:gds|gda|gula\s*darah|blood\s*sugar|gdp)\s*:?\s*(\d{2,3}(?:\.\d)?)/);
-  if (gdMatch) result.bloodSugarMg = parseFloat(gdMatch[1]);
+  const gdMatch = textLower.match(/\b(?:gds|gda|gula\s*darah|blood\s*sugar|gdp)\s*:?\s*(\d{2,3}(?:[.,]\d{1,2})?)/);
+  if (gdMatch) result.bloodSugarMg = num(gdMatch[1]);
 
   // ── PHASE A: Malaria RDT - "Malaria positif" or "RDT malaria -" ──
 const malMatch = textLower.match(/(?:malaria|rdt\s*malaria|rdt)\s*:?\s*(positif|negatif|pos|neg|[+-])/);
