@@ -14,3 +14,9 @@ export type { AncVisitData, QualityResult } from './score10T';
 
 export { generateClinicalFlags, shouldRefer, formatFlagsForWhatsApp } from './clinicalFlags';
 export type { ClinicalFlag, AncClinicalInput } from './clinicalFlags';
+
+export { parsePncData } from './parseBidanInput';
+export type { ParsedPncData, Severity3 } from './parseBidanInput';
+
+export { generatePncFlags, shouldReferPnc, kfForDay } from './pncFlags';
+export type { PncClinicalInput } from './pncFlags';

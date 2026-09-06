@@ -342,3 +342,154 @@ export function calculateBMI(weightKg: number | null, heightCm: number | null): 
 
   return { bmi, category };
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POSTNATAL (PNC / KF1-KF4)
+// ---------------------------------------------------------------------------
+// Lifted out of bidanEngine.ts, where these patterns lived inline and could not
+// be reached by the app. Three things changed in the move, all of them because
+// the original lost data rather than erring:
+//
+//   1. Numbers go through num(), so "suhu 38,5" is 38.5 and not 38. On a fever
+//      threshold that is the whole difference.
+//   2. Severity words are searched for ANYWHERE in the phrase. The original
+//      took the first word after the label, so "perdarahan sangat banyak" —
+//      very heavy — captured "sangat" and raised nothing at all.
+//   3. Both the raw phrase and a normalised value are returned. Rules read the
+//      normalised one; the raw is kept so a record never loses what she wrote.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type Severity3 = 'none' | 'normal' | 'high';
+
+export interface ParsedPncData {
+  bpSystolic: number | null;
+  bpDiastolic: number | null;
+  temperatureC: number | null;
+  bleeding: Severity3 | null;
+  bleedingRaw: string | null;
+  lochiaFoul: boolean | null;
+  lochiaRaw: string | null;
+  woundInfected: boolean | null;
+  woundRaw: string | null;
+  breastfeedingEstablished: boolean | null;
+  breastfeedingRaw: string | null;
+  babyWeightKg: number | null;
+  jaundiceSevere: boolean | null;
+  jaundiceRaw: string | null;
+  epdsScore: number | null;
+  fpCounselling: boolean | null;
+  complaints: string | null;
+  rawInput: string;
+}
+
+/** Capture the whole phrase after a label, up to the next comma. */
+function phrase(textLower: string, labels: string): string | null {
+  const re = new RegExp(`\\b(?:${labels})\\s*:?\\s*([^,]+)`);
+  const m = textLower.match(re);
+  return m ? m[1].trim() : null;
+}
+
+/** Does any of these words appear in the phrase? Word-boundary matched. */
+function mentions(text: string | null, words: string[]): boolean {
+  if (!text) return false;
+  return words.some((w) => new RegExp(`\\b${w}\\b`).test(text));
+}
+
+/**
+ * Is the phrase negated?
+ *
+ * This must be checked BEFORE any severity word, because the severity word is
+ * still present in the negation: "perdarahan tidak banyak" contains "banyak",
+ * and reading that as heavy bleeding raises a false emergency. Likewise "asi
+ * belum lancar" contains "lancar" and means the opposite of it.
+ */
+function negated(text: string | null): boolean {
+  return mentions(text, ['tidak', 'tdk', 'tak', 'belum', 'blm', 'bukan', 'tanpa', 'nihil', 'no', 'not']);
+}
+
+export function parsePncData(message: string): ParsedPncData {
+  const text = message.trim();
+  const t = text.toLowerCase();
+
+  const result: ParsedPncData = {
+    bpSystolic: null, bpDiastolic: null, temperatureC: null,
+    bleeding: null, bleedingRaw: null,
+    lochiaFoul: null, lochiaRaw: null,
+    woundInfected: null, woundRaw: null,
+    breastfeedingEstablished: null, breastfeedingRaw: null,
+    babyWeightKg: null, jaundiceSevere: null, jaundiceRaw: null,
+    epdsScore: null, fpCounselling: null, complaints: null,
+    rawInput: text,
+  };
+
+  const td = t.match(/\b(?:td|tensi|tekanan\s*darah)\s*:?\s*(\d{2,3})\s*\/\s*(\d{2,3})/);
+  if (td) {
+    result.bpSystolic = parseInt(td[1], 10);
+    result.bpDiastolic = parseInt(td[2], 10);
+  }
+
+  // Fever is the sepsis signal, so this one must not lose a decimal.
+  const suhu = t.match(/\b(?:suhu|temp|temperatur|t)\s*:?\s*(\d{2}(?:[.,]\d{1,2})?)\s*(?:c|celsius|derajat)?/);
+  if (suhu) result.temperatureC = num(suhu[1]);
+
+  const bbBayi = t.match(/\b(?:bb\s*bayi|berat\s*bayi|bb\s*anak)\s*:?\s*(\d{1,2}(?:[.,]\d{1,3})?)/);
+  if (bbBayi) result.babyWeightKg = num(bbBayi[1]);
+
+  const epds = t.match(/\bepds\s*:?\s*(\d{1,2})/);
+  if (epds) result.epdsScore = parseInt(epds[1], 10);
+
+  // ── bleeding ──────────────────────────────────────────────────────────────
+  result.bleedingRaw = phrase(t, 'perdarahan|pendarahan|bleeding');
+  if (result.bleedingRaw !== null) {
+    const b = result.bleedingRaw;
+    if (negated(b) || mentions(b, ['berhenti', 'nihil'])) {
+      result.bleeding = 'none';
+    } else if (mentions(b, ['banyak', 'berat', 'hebat', 'deras', 'heavy', 'masif'])) {
+      result.bleeding = 'high';
+    } else if (mentions(b, ['normal', 'sedikit', 'biasa', 'wajar', 'ringan'])) {
+      result.bleeding = 'normal';
+    }
+  }
+
+  // ── lochia: the smell is the sign, not the colour ─────────────────────────
+  result.lochiaRaw = phrase(t, 'lochea|lokia|lochia');
+  if (result.lochiaRaw !== null) {
+    result.lochiaFoul = !negated(result.lochiaRaw)
+      && mentions(result.lochiaRaw, ['bau', 'berbau', 'busuk', 'foul', 'amis']);
+  }
+
+  // ── perineal / caesarean wound ────────────────────────────────────────────
+  result.woundRaw = phrase(t, 'luka|jahitan|perineum|wound');
+  if (result.woundRaw !== null) {
+    result.woundInfected = !negated(result.woundRaw)
+      && mentions(result.woundRaw,
+        ['infeksi', 'bernanah', 'nanah', 'merah', 'bengkak', 'basah', 'terbuka', 'infected']);
+  }
+
+  // ── breastfeeding ─────────────────────────────────────────────────────────
+  result.breastfeedingRaw = phrase(t, 'asi|menyusui|breastfeeding');
+  if (result.breastfeedingRaw !== null) {
+    const a = result.breastfeedingRaw;
+    if (negated(a) || mentions(a, ['sedikit', 'kurang', 'sulit', 'macet', 'seret'])) {
+      result.breastfeedingEstablished = false;
+    } else if (mentions(a, ['lancar', 'baik', 'eksklusif', 'ya', 'sudah', 'normal'])) {
+      result.breastfeedingEstablished = true;
+    }
+  }
+
+  // ── neonatal jaundice ─────────────────────────────────────────────────────
+  result.jaundiceRaw = phrase(t, 'kuning|ikterus|jaundice');
+  if (result.jaundiceRaw !== null) {
+    result.jaundiceSevere = !negated(result.jaundiceRaw)
+      && mentions(result.jaundiceRaw, ['berat', 'severe', 'parah', 'seluruh', 'telapak']);
+  }
+
+  const kb = phrase(t, 'kb|keluarga\\s*berencana|kontrasepsi');
+  if (kb !== null) result.fpCounselling = !negated(kb);
+
+  const keluhan = text.match(/(?:keluhan|complaint)\s*:?\s*([^,]+)/i);
+  if (keluhan) result.complaints = keluhan[1].trim();
+
+  return result;
+}

@@ -12,6 +12,8 @@
 import { parseAncInit, parseAncData, parsePncInit, calculateBMI } from '../src/parseBidanInput';
 import { score10T } from '../src/score10T';
 import { generateClinicalFlags, shouldRefer } from '../src/clinicalFlags';
+import { parsePncData } from '../src/parseBidanInput';
+import { generatePncFlags, shouldReferPnc, kfForDay } from '../src/pncFlags';
 
 let pass = 0;
 const failures: string[] = [];
@@ -228,6 +230,84 @@ eq(comma('tt2, fe 90').t4TtStatus, '2', 'tetanus: real TT status still parses');
 eq(comma('tt lengkap').t4TtStatus, 'lengkap', 'tetanus: worded status still parses');
 eq(comma('tetanus lengkap, ttd 90').t5FeTablets, 90,
    'tetanus and TTD in one message: both are read, neither eats the other');
+
+// ═══ POSTNATAL ═══════════════════════════════════════════════════════════════
+// These pin the four rules carried over from production plus the ones added
+// around them. The four PRESERVED assertions must never change without a
+// clinician saying so — they are what the WhatsApp path has been doing.
+
+const pnc = (over: Partial<Parameters<typeof generatePncFlags>[0]> = {}) =>
+  generatePncFlags({ daysPostpartum: 3, ...over });
+const hasP = (fl: ReturnType<typeof generatePncFlags>, t: string) => fl.some((f) => f.type === t);
+
+// ── PRESERVED from production ────────────────────────────────────────────────
+ok(hasP(pnc({ bleeding: 'high' }), 'PPH'), 'PRESERVED: heavy bleeding → PPH');
+ok(hasP(pnc({ bpSystolic: 145, bpDiastolic: 95 }), 'HYPERTENSION_PNC'),
+   'PRESERVED: systolic 145 → HYPERTENSION_PNC');
+ok(hasP(pnc({ epdsScore: 10 }), 'EPDS_POSITIVE'), 'PRESERVED: EPDS 10 → positive');
+ok(hasP(pnc({ jaundiceSevere: true }), 'SEVERE_JAUNDICE'), 'PRESERVED: severe jaundice');
+
+// ── sepsis: the rule that did not exist ─────────────────────────────────────
+ok(hasP(pnc({ temperatureC: 38.0 }), 'PUERPERAL_FEVER'), 'fever 38.0 → puerperal fever');
+ok(hasP(pnc({ temperatureC: 38.5, lochiaFoul: true }), 'PUERPERAL_SEPSIS'),
+   'fever + foul lochia → sepsis, not just fever');
+ok(!hasP(pnc({ temperatureC: 37.4 }), 'PUERPERAL_FEVER'), '37.4 is not a fever');
+ok(hasP(pnc({ temperatureC: 37.6 }), 'LOW_GRADE_FEVER'), '37.6 → low grade, watch');
+ok(hasP(pnc({ temperatureC: 35.0 }), 'HYPOTHERMIA'), 'hypothermia is also sepsis');
+eq(shouldReferPnc(pnc({ temperatureC: 38.2 })).urgency, 'emergency', 'fever refers as emergency');
+
+// The whole point of the decimal fix, end to end: 38,5 must not become 38.0's
+// neighbour 38 by truncation — and must not become "no fever" either.
+eq(parsePncData('suhu 38,5').temperatureC, 38.5, 'PNC: comma decimal on temperature');
+ok(hasP(pnc({ temperatureC: parsePncData('suhu 38,5').temperatureC }), 'PUERPERAL_FEVER'),
+   'suhu 38,5 raises a fever flag');
+
+// ── the bleeding phrase that used to raise nothing ──────────────────────────
+eq(parsePncData('perdarahan sangat banyak').bleeding, 'high',
+   '"sangat banyak" is heavy — the phrasing that used to be silent');
+ok(hasP(pnc({ bleeding: parsePncData('perdarahan sangat banyak').bleeding }), 'PPH'),
+   '"perdarahan sangat banyak" → PPH');
+eq(parsePncData('perdarahan tidak banyak').bleeding, 'none',
+   'negation must not raise a false emergency');
+ok(!hasP(pnc({ bleeding: parsePncData('perdarahan tidak banyak').bleeding }), 'PPH'),
+   '"tidak banyak" does NOT raise PPH');
+
+// ── blood pressure tiers ────────────────────────────────────────────────────
+ok(hasP(pnc({ bpSystolic: 165, bpDiastolic: 100 }), 'SEVERE_HYPERTENSION_PNC'), 'systolic 165 → severe');
+ok(hasP(pnc({ bpSystolic: 130, bpDiastolic: 115 }), 'SEVERE_HYPERTENSION_PNC'), 'diastolic 115 → severe');
+ok(!hasP(pnc({ bpSystolic: 165 }), 'HYPERTENSION_PNC'), 'severe does not also raise the mild flag');
+ok(hasP(pnc({ bpSystolic: 85 }), 'HYPOTENSION_SHOCK'), 'systolic 85 → shock');
+
+// ── infection without a thermometer ─────────────────────────────────────────
+ok(hasP(pnc({ lochiaFoul: true }), 'FOUL_LOCHIA'), 'foul lochia refers with no temperature');
+eq(shouldReferPnc(pnc({ woundInfected: true })).urgency, 'urgent',
+   'wound infection refers, urgent not emergency');
+
+// ── mental health tiers ─────────────────────────────────────────────────────
+ok(hasP(pnc({ epdsScore: 13 }), 'EPDS_PROBABLE_DEPRESSION'), 'EPDS 13 → probable depression');
+eq(shouldReferPnc(pnc({ epdsScore: 13 })).refer, true, 'EPDS 13 refers');
+eq(shouldReferPnc(pnc({ epdsScore: 10 })).refer, false, 'EPDS 10 warns but does not refer');
+
+// ── the baby ────────────────────────────────────────────────────────────────
+ok(hasP(pnc({ babyWeightKg: 1.8 }), 'VERY_LOW_BIRTH_WEIGHT'), '1.8 kg → emergency');
+ok(hasP(pnc({ babyWeightKg: 2.4 }), 'LOW_BIRTH_WEIGHT'), '2.4 kg → LBW');
+ok(!hasP(pnc({ babyWeightKg: 3.0 }), 'LOW_BIRTH_WEIGHT'), '3.0 kg is fine');
+eq(parsePncData('bb bayi 2,4').babyWeightKg, 2.4, 'baby weight: comma decimal');
+ok(hasP(pnc({ breastfeedingEstablished: false }), 'BREASTFEEDING_PROBLEM'), 'feeding problem warns');
+eq(parsePncData('asi belum lancar').breastfeedingEstablished, false,
+   '"belum lancar" is NOT established — negation before the positive word');
+
+// ── quiet visit ─────────────────────────────────────────────────────────────
+eq(pnc({ bpSystolic: 110, bpDiastolic: 70, temperatureC: 36.8, bleeding: 'normal',
+         breastfeedingEstablished: true, babyWeightKg: 3.2, epdsScore: 3 }).length, 0,
+   'a normal postnatal visit raises nothing at all');
+
+// ── KF windows ──────────────────────────────────────────────────────────────
+eq(kfForDay(1), 'KF1', 'day 1 → KF1');
+eq(kfForDay(5), 'KF2', 'day 5 → KF2');
+eq(kfForDay(20), 'KF3', 'day 20 → KF3');
+eq(kfForDay(40), 'KF4', 'day 40 → KF4');
+eq(kfForDay(50), null, 'day 50 is past the postnatal period');
 
 // ═══ report ══════════════════════════════════════════════════════════════════
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
