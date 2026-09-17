@@ -16,6 +16,7 @@ import { parsePncData } from '../src/parseBidanInput';
 import { generatePncFlags, shouldReferPnc, kfForDay } from '../src/pncFlags';
 import { generateDeliveryFlags, shouldReferDelivery, linakes } from '../src/deliveryFlags';
 import { generateKnFlags, shouldReferKn, knForDay } from '../src/knFlags';
+import { suggestCarePlan, planToFields } from '../src/carePlan';
 
 let pass = 0;
 const failures: string[] = [];
@@ -497,6 +498,79 @@ eq(kn({
   hepatitisB0: true, vitaminK: true, bcg: true, polio0: true, shk: true,
 }).length, 0, 'a well newborn at KN2 raises nothing at all');
 eq(shouldReferKn([]), { refer: false, urgency: 'none', reasons: [] }, 'and refers nobody');
+
+
+// ═══ the suggested care plan ═════════════════════════════════════════════════
+// These tests pin the PROPERTIES rather than the wording: that a finding
+// produces a plan at all, that referral sorts first, that nothing is invented
+// without a trigger, and that a declined line never reaches the record. The
+// wording itself is a clinical review question, not a test question.
+
+function plan(flagTypes: string[], gw = 28, due: string[] = []) {
+  return suggestCarePlan({
+    flags: flagTypes.map((t) => ({ type: t, severity: 'WARNING', referral: false,
+                                   message_id: '', message_en: '' })),
+    gestationalWeeks: gw, due,
+  });
+}
+const codes = (p: ReturnType<typeof plan>) => p.map((x) => x.code);
+
+// ── every suggestion is traceable to a trigger ──────────────────────────────
+ok(plan(['MILD_ANAEMIA']).every((p) => p.trigger.length > 0),
+   'every plan item names what produced it');
+ok(plan([], 28).every((p) => p.trigger === 'schedule'),
+   'with no findings the only suggestion is the next visit');
+ok(plan([]).length === 1, 'and there is exactly one of those, never an empty plan');
+
+// ── a finding with several actions yields several lines ─────────────────────
+ok(codes(plan(['MILD_ANAEMIA'])).includes('ma_fe'), 'anaemia suggests iron');
+ok(codes(plan(['MILD_ANAEMIA'])).includes('ma_tea'), 'and the tea-with-tablets counselling');
+ok(codes(plan(['MILD_ANAEMIA'])).includes('ma_recheck'), 'and a recheck date');
+ok(plan(['MILD_ANAEMIA']).filter((p) => p.trigger === 'MILD_ANAEMIA').length >= 3,
+   'because she accepts or declines each one separately');
+
+// ── referral sorts to the top ───────────────────────────────────────────────
+eq(plan(['PRE_ECLAMPSIA'])[0].category, 'rujukan',
+   'when referral is needed it is the first line, never buried under advice');
+eq(plan(['BLEEDING'])[0].code, 'bl_refer', 'bleeding refers first');
+ok(codes(plan(['BLEEDING'])).includes('bl_refer'),
+   'and carries the do-not-examine instruction with it');
+
+// ── the plan always ends with a date ────────────────────────────────────────
+ok(codes(plan(['KEK'])).includes('next_visit'), 'a plan always books the next contact');
+ok(plan(['KEK']).find((p) => p.code === 'next_visit')!.action_id.includes('2 minggu'),
+   'fortnightly at 28 weeks');
+ok(plan(['KEK'], 20).find((p) => p.code === 'next_visit')!.action_id.includes('4 minggu'),
+   'monthly before 28 weeks');
+ok(plan(['KEK'], 38).find((p) => p.code === 'next_visit')!.action_id.includes('1 minggu'),
+   'weekly from 36 weeks');
+eq(plan([], 46).length, 0, 'and nothing at all past 45 weeks — the dates are wrong, not the mother');
+
+// ── outstanding things, not just abnormal ones ──────────────────────────────
+ok(codes(plan([], 28, ['hb'])).includes('due_hb'), 'a never-checked Hb reaches the plan');
+ok(codes(plan([], 28, ['fe', 'p4k'])).includes('due_fe'), 'so does the iron shortfall');
+ok(codes(plan([], 28, ['fe', 'p4k'])).includes('due_p4k'), 'and the incomplete birth plan');
+ok(!codes(plan([], 28, ['nonsense'])).includes('undefined'),
+   'an unknown due code is ignored rather than producing a blank line');
+
+// ── deterministic ───────────────────────────────────────────────────────────
+eq(codes(plan(['KEK', 'MILD_ANAEMIA'], 30, ['fe'])),
+   codes(plan(['KEK', 'MILD_ANAEMIA'], 30, ['fe'])),
+   'the same findings always produce the same plan in the same order');
+ok(new Set(codes(plan(['KEK', 'BMI_UNDERWEIGHT']))).size === codes(plan(['KEK', 'BMI_UNDERWEIGHT'])).length,
+   'and never the same line twice, however many findings raise it');
+
+// ── what she declines is not recorded as care ───────────────────────────────
+{
+  const p = plan(['MILD_ANAEMIA'], 28);
+  const accepted = p.filter((x) => x.code !== 'ma_fe');   // she declined the iron
+  const { t9, t10 } = planToFields(accepted);
+  ok(!t9.includes('tablet tambah darah'), 'a declined line is absent from the record');
+  ok(t9.includes('teh'), 'while the accepted counselling is still there');
+  ok(t10.includes('Kunjungan berikutnya'), 'and the schedule lands in T10, not T9');
+  eq(planToFields([]).t9, '', 'accepting nothing writes nothing');
+}
+eq(planToFields(plan(['KEK']), 'en').t10, 'Next visit in 2 weeks', 'English is a full translation, not a fallback');
 
 // ═══ report ══════════════════════════════════════════════════════════════════
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

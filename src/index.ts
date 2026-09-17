@@ -28,3 +28,6 @@ export type {
 
 export { generateKnFlags, shouldReferKn, knForDay } from './knFlags';
 export type { KnInput } from './knFlags';
+
+export { suggestCarePlan, planToFields } from './carePlan';
+export type { PlanItem, PlanCategory, CarePlanInput } from './carePlan';
