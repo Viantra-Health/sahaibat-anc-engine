@@ -15,6 +15,7 @@ import { generateClinicalFlags, shouldRefer } from '../src/clinicalFlags';
 import { parsePncData } from '../src/parseBidanInput';
 import { generatePncFlags, shouldReferPnc, kfForDay } from '../src/pncFlags';
 import { generateDeliveryFlags, shouldReferDelivery, linakes } from '../src/deliveryFlags';
+import { generateKnFlags, shouldReferKn, knForDay } from '../src/knFlags';
 
 let pass = 0;
 const failures: string[] = [];
@@ -398,6 +399,104 @@ eq(del({
   babies: [{ order: 1, outcome: 'hidup', weightGrams: 3100, criedImmediately: true,
              imd: true, vitaminK: true, hepatitisB0: true }],
 }).length, 0, 'an uncomplicated facility birth raises nothing at all');
+
+
+// ═══ KN — the newborn visits ═════════════════════════════════════════════════
+// A newborn is not a small adult. Several of these thresholds are deliberately
+// stricter than their postnatal equivalents in the mother, and the day of life
+// changes the meaning of the finding rather than just its urgency.
+
+function kn(over: Partial<Parameters<typeof generateKnFlags>[0]> = {}) {
+  return generateKnFlags({ dayOfLife: 5, ...over } as Parameters<typeof generateKnFlags>[0]);
+}
+function hasK(flags: ReturnType<typeof generateKnFlags>, type: string) {
+  return flags.some((f) => f.type === type);
+}
+
+// ── the windows ─────────────────────────────────────────────────────────────
+eq(knForDay(0), 'KN1', 'day 0 is KN1');
+eq(knForDay(2), 'KN1', 'day 2 is still KN1 — the window is 6 to 48 hours');
+eq(knForDay(3), 'KN2', 'day 3 opens KN2');
+eq(knForDay(7), 'KN2', 'day 7 closes KN2');
+eq(knForDay(8), 'KN3', 'day 8 opens KN3');
+eq(knForDay(28), 'KN3', 'day 28 is the last day that counts as KN3');
+eq(knForDay(29), null, 'day 29 is past the neonatal period');
+eq(knForDay(-1), null, 'a negative day is not a visit');
+
+// ── danger signs, MTBM ──────────────────────────────────────────────────────
+ok(hasK(kn({ convulsions: true }), 'KN_CONVULSIONS'), 'convulsions');
+ok(hasK(kn({ feedingWell: false }), 'KN_NOT_FEEDING'), 'not feeding');
+ok(hasK(kn({ lethargic: true }), 'KN_LETHARGY'), 'moves only when stimulated');
+ok(hasK(kn({ fastBreathing: true }), 'KN_BREATHING'), 'fast breathing');
+ok(hasK(kn({ chestIndrawing: true }), 'KN_BREATHING'), 'chest indrawing — same flag');
+ok(shouldReferKn(kn({ convulsions: true })).urgency === 'emergency', 'a danger sign is an emergency referral');
+ok(!hasK(kn({ feedingWell: true }), 'KN_NOT_FEEDING'), 'feeding well is silent');
+ok(!hasK(kn({}), 'KN_NOT_FEEDING'), 'unrecorded feeding is NOT a danger sign');
+
+// ── temperature: hypothermia is an emergency in a newborn ───────────────────
+ok(hasK(kn({ temperatureC: 36.4 }), 'KN_HYPOTHERMIA'), '36.4 is hypothermia');
+eq(kn({ temperatureC: 36.4 }).find((f) => f.type === 'KN_HYPOTHERMIA')!.severity,
+   'EMERGENCY', 'and it is an EMERGENCY — a newborn cannot rewarm herself');
+ok(hasK(kn({ temperatureC: 35.9 }), 'KN_SEVERE_HYPOTHERMIA'), '35.9 is severe');
+ok(!hasK(kn({ temperatureC: 35.9 }), 'KN_HYPOTHERMIA'), 'severe does not also raise the milder flag');
+ok(!hasK(kn({ temperatureC: 36.5 }), 'KN_HYPOTHERMIA'), '36.5 exactly is normal');
+ok(!hasK(kn({ temperatureC: 37.4 }), 'KN_FEVER'), '37.4 is normal');
+ok(hasK(kn({ temperatureC: 37.5 }), 'KN_FEVER'), '37.5 is fever — lower than the 38 used for the mother');
+
+// ── cord ────────────────────────────────────────────────────────────────────
+ok(hasK(kn({ cordInfected: true }), 'KN_CORD_INFECTION'), 'cord infection refers');
+ok(!hasK(kn({ cordInfected: false }), 'KN_CORD_INFECTION'), 'a clean cord is silent');
+
+// ── jaundice: the day is the diagnosis ──────────────────────────────────────
+eq(kn({ dayOfLife: 1, jaundice: true }).find((f) => f.type === 'KN_JAUNDICE_DAY1')!.severity,
+   'EMERGENCY', 'jaundice on day 1 is pathological, never physiological');
+ok(hasK(kn({ dayOfLife: 4, jaundice: true }), 'KN_JAUNDICE'), 'jaundice on day 4 is monitored');
+eq(kn({ dayOfLife: 4, jaundice: true }).find((f) => f.type === 'KN_JAUNDICE')!.referral,
+   false, 'and does not by itself refer');
+ok(hasK(kn({ dayOfLife: 20, jaundice: true }), 'KN_JAUNDICE_PROLONGED'), 'past 14 days it is prolonged');
+ok(hasK(kn({ dayOfLife: 20, jaundice: true, jaundicePalmsSoles: true }), 'KN_JAUNDICE_SEVERE'),
+   'palms and soles outrank every other jaundice rule');
+ok(!hasK(kn({ dayOfLife: 20, jaundice: true, jaundicePalmsSoles: true }), 'KN_JAUNDICE_PROLONGED'),
+   'and suppresses them, so the midwife sees one instruction');
+
+// ── weight ──────────────────────────────────────────────────────────────────
+ok(!hasK(kn({ dayOfLife: 3, birthWeightGrams: 3000, weightGrams: 2750 }), 'KN_WEIGHT_LOSS'),
+   'losing 8% in the first days is physiological');
+ok(hasK(kn({ dayOfLife: 3, birthWeightGrams: 3000, weightGrams: 2650 }), 'KN_WEIGHT_LOSS'),
+   'losing 12% is not');
+ok(hasK(kn({ dayOfLife: 16, birthWeightGrams: 3000, weightGrams: 2950 }), 'KN_NOT_REGAINED'),
+   'still under birth weight at day 16 is a feeding problem');
+ok(!hasK(kn({ dayOfLife: 10, birthWeightGrams: 3000, weightGrams: 2950 }), 'KN_NOT_REGAINED'),
+   'but not yet at day 10 — she has until two weeks');
+ok(!hasK(kn({ dayOfLife: 16, birthWeightGrams: 3000, weightGrams: 3050 }), 'KN_NOT_REGAINED'),
+   'and not once she is above it');
+ok(hasK(kn({ weightGrams: 2400 }), 'KN_LOW_WEIGHT'), 'under 2500 g needs warmth and watching');
+ok(!hasK(kn({ weightGrams: 2500 }), 'KN_LOW_WEIGHT'), '2500 g exactly is not low');
+ok(!hasK(kn({ weightGrams: 2900 }), 'KN_WEIGHT_LOSS'), 'no birth weight recorded, no loss calculated');
+
+// ── mandated care: only an explicit no counts ───────────────────────────────
+ok(hasK(kn({ dayOfLife: 2, hepatitisB0: false }), 'KN_NO_HB0'), 'HB0 not given is flagged');
+ok(!hasK(kn({ dayOfLife: 2, hepatitisB0: true }), 'KN_NO_HB0'), 'HB0 given is silent');
+ok(!hasK(kn({ dayOfLife: 2 }), 'KN_NO_HB0'), 'HB0 unrecorded is NOT the same as not given');
+ok(hasK(kn({ vitaminK: false }), 'KN_NO_VITAMIN_K'), 'vitamin K not given is a bleeding risk');
+ok(!hasK(kn({ dayOfLife: 3, bcg: false }), 'KN_NO_BCG'), 'BCG is not chased on day 3');
+ok(hasK(kn({ dayOfLife: 10, bcg: false }), 'KN_NO_BCG'), 'but is by day 10');
+ok(!hasK(kn({ dayOfLife: 2, shk: false }), 'KN_NO_SHK'), 'SHK is not chased inside its own 48–72h window');
+ok(hasK(kn({ dayOfLife: 5, shk: false }), 'KN_NO_SHK'), 'but is once that window has passed');
+
+// ── schedule ────────────────────────────────────────────────────────────────
+ok(hasK(kn({ dayOfLife: 35 }), 'KN_OUT_OF_WINDOW'), 'past 28 days the visit is noted as late');
+eq(kn({ dayOfLife: 35 }).find((f) => f.type === 'KN_OUT_OF_WINDOW')!.referral,
+   false, 'a late visit is still a visit — it is never a referral');
+
+// ── a well baby says nothing ────────────────────────────────────────────────
+eq(kn({
+  dayOfLife: 5, weightGrams: 3050, birthWeightGrams: 3100, temperatureC: 36.8,
+  feedingWell: true, cordInfected: false, jaundice: false,
+  convulsions: false, fastBreathing: false, chestIndrawing: false, lethargic: false,
+  hepatitisB0: true, vitaminK: true, bcg: true, polio0: true, shk: true,
+}).length, 0, 'a well newborn at KN2 raises nothing at all');
+eq(shouldReferKn([]), { refer: false, urgency: 'none', reasons: [] }, 'and refers nobody');
 
 // ═══ report ══════════════════════════════════════════════════════════════════
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

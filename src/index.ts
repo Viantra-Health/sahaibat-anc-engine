@@ -25,3 +25,6 @@ export { generateDeliveryFlags, shouldReferDelivery, linakes } from './deliveryF
 export type {
   DeliveryInput, BabyOutcome, BirthPlace, Attendant, DeliveryMode, BirthOutcome,
 } from './deliveryFlags';
+
+export { generateKnFlags, shouldReferKn, knForDay } from './knFlags';
+export type { KnInput } from './knFlags';

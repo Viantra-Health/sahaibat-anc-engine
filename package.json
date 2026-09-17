@@ -1,7 +1,7 @@
 {
   "name": "@sahaibat/anc-engine",
-  "version": "1.3.0",
-  "description": "Indonesia's maternal standards as executable rules \u2014 10T antenatal scoring, antenatal and postnatal clinical flags, and the free-text parsing behind them. Pure functions, no I/O.",
+  "version": "1.4.0",
+  "description": "Indonesia's maternal standards as executable rules \u2014 10T antenatal scoring, antenatal, postnatal, delivery and newborn clinical flags, and the free-text parsing behind them. Pure functions, no I/O.",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "files": [
