@@ -20,3 +20,8 @@ export type { ParsedPncData, Severity3 } from './parseBidanInput';
 
 export { generatePncFlags, shouldReferPnc, kfForDay } from './pncFlags';
 export type { PncClinicalInput } from './pncFlags';
+
+export { generateDeliveryFlags, shouldReferDelivery, linakes } from './deliveryFlags';
+export type {
+  DeliveryInput, BabyOutcome, BirthPlace, Attendant, DeliveryMode, BirthOutcome,
+} from './deliveryFlags';

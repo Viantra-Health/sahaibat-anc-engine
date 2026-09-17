@@ -14,6 +14,7 @@ import { score10T } from '../src/score10T';
 import { generateClinicalFlags, shouldRefer } from '../src/clinicalFlags';
 import { parsePncData } from '../src/parseBidanInput';
 import { generatePncFlags, shouldReferPnc, kfForDay } from '../src/pncFlags';
+import { generateDeliveryFlags, shouldReferDelivery, linakes } from '../src/deliveryFlags';
 
 let pass = 0;
 const failures: string[] = [];
@@ -308,6 +309,95 @@ eq(kfForDay(5), 'KF2', 'day 5 → KF2');
 eq(kfForDay(20), 'KF3', 'day 20 → KF3');
 eq(kfForDay(40), 'KF4', 'day 40 → KF4');
 eq(kfForDay(50), null, 'day 50 is past the postnatal period');
+
+// ═══ DELIVERY ════════════════════════════════════════════════════════════════
+// The event the whole record exists for, and the one the product had nowhere
+// to store. These pin both the clinical thresholds and the linakes derivation,
+// which nothing else in the system can produce.
+
+const del = (over: Partial<Parameters<typeof generateDeliveryFlags>[0]> = {}) =>
+  generateDeliveryFlags({ babies: [{ order: 1, outcome: 'hidup' }], ...over });
+const hasD = (fl: ReturnType<typeof generateDeliveryFlags>, t: string) => fl.some((f) => f.type === t);
+
+// ── linakes: the indicator, both halves ─────────────────────────────────────
+eq(linakes({ babies: [], attendant: 'bidan', place: 'puskesmas' }),
+   { skilledAttendant: true, atFacility: true }, 'bidan at a puskesmas is linakes and facility');
+eq(linakes({ babies: [], attendant: 'bidan', place: 'rumah' }),
+   { skilledAttendant: true, atFacility: false },
+   'bidan at home is skilled but NOT a facility birth — the two must not collapse');
+eq(linakes({ babies: [], attendant: 'dukun', place: 'rumah' }),
+   { skilledAttendant: false, atFacility: false }, 'dukun at home is neither');
+eq(linakes({ babies: [], attendant: 'dokter_spesialis', place: 'rs' }),
+   { skilledAttendant: true, atFacility: true }, 'specialist at a hospital');
+
+// ── haemorrhage, with the caesarean threshold ───────────────────────────────
+ok(hasD(del({ bloodLossMl: 500 }), 'PPH_DELIVERY'), '500 ml vaginal → PPH');
+ok(!hasD(del({ bloodLossMl: 499 }), 'PPH_DELIVERY'), '499 ml is not PPH');
+ok(!hasD(del({ bloodLossMl: 600, mode: 'sc' }), 'PPH_DELIVERY'), '600 ml after caesarean is not PPH');
+ok(hasD(del({ bloodLossMl: 1000, mode: 'sc' }), 'PPH_DELIVERY'), '1000 ml after caesarean is');
+eq(shouldReferDelivery(del({ bloodLossMl: 800 })).urgency, 'emergency', 'PPH refers as emergency');
+
+// ── complications, from her words ───────────────────────────────────────────
+ok(hasD(del({ complications: ['retensio plasenta'] }), 'RETAINED_PLACENTA'), 'retained placenta');
+ok(hasD(del({ complications: ['kejang'] }), 'ECLAMPSIA'), 'seizure → eclampsia');
+ok(hasD(del({ complications: ['partus lama'] }), 'OBSTRUCTED_LABOUR'), 'prolonged labour');
+ok(hasD(del({ complications: ['robekan perineum'] }), 'SEVERE_TEAR'), 'perineal tear');
+
+// ── the baby ────────────────────────────────────────────────────────────────
+ok(hasD(del({ babies: [{ order: 1, outcome: 'hidup', criedImmediately: false }] }), 'BIRTH_ASPHYXIA'),
+   'did not cry → asphyxia, the most time-critical newborn finding');
+ok(!hasD(del({ babies: [{ order: 1, outcome: 'hidup', criedImmediately: true }] }), 'BIRTH_ASPHYXIA'),
+   'cried → no asphyxia flag');
+ok(hasD(del({ babies: [{ order: 1, outcome: 'hidup', weightGrams: 1800 }] }), 'VERY_LOW_BIRTH_WEIGHT'),
+   '1800 g → emergency');
+ok(hasD(del({ babies: [{ order: 1, outcome: 'hidup', weightGrams: 2400 }] }), 'LOW_BIRTH_WEIGHT'),
+   '2400 g → BBLR');
+ok(!hasD(del({ babies: [{ order: 1, outcome: 'hidup', weightGrams: 3200 }] }), 'LOW_BIRTH_WEIGHT'),
+   '3200 g is fine');
+ok(hasD(del({ babies: [{ order: 1, outcome: 'hidup', weightGrams: 4200 }] }), 'MACROSOMIA'),
+   '4200 g → watch blood sugar');
+
+// A stillbirth must not then be checked for asphyxia or vitamin K.
+const still = del({ babies: [{ order: 1, outcome: 'mati', criedImmediately: false, vitaminK: false }] });
+ok(hasD(still, 'STILLBIRTH'), 'stillbirth recorded');
+ok(!hasD(still, 'BIRTH_ASPHYXIA'), 'a stillborn baby is not flagged for asphyxia');
+ok(!hasD(still, 'NO_VITAMIN_K'), 'a stillborn baby is not flagged for missing vitamin K');
+
+// ── twins ───────────────────────────────────────────────────────────────────
+const twins = del({ babies: [
+  { order: 1, outcome: 'hidup', weightGrams: 2300 },
+  { order: 2, outcome: 'hidup', weightGrams: 2100 },
+] });
+eq(twins.filter((f) => f.type === 'LOW_BIRTH_WEIGHT').length, 2, 'both twins flagged separately');
+ok(twins.some((f) => f.message_id.includes('bayi 2')), 'the message says which baby');
+
+// ── mandated newborn care ───────────────────────────────────────────────────
+ok(hasD(del({ babies: [{ order: 1, outcome: 'hidup', vitaminK: false }] }), 'NO_VITAMIN_K'), 'vitamin K1');
+ok(hasD(del({ babies: [{ order: 1, outcome: 'hidup', hepatitisB0: false }] }), 'NO_HB0'), 'HB0');
+ok(hasD(del({ babies: [{ order: 1, outcome: 'hidup', imd: false }] }), 'NO_IMD'), 'IMD');
+// Unknown is not "not done". A midwife who has not answered yet is not failing.
+ok(!hasD(del({ babies: [{ order: 1, outcome: 'hidup' }] }), 'NO_VITAMIN_K'),
+   'unrecorded vitamin K is NOT flagged as missing');
+
+// ── timing ──────────────────────────────────────────────────────────────────
+ok(hasD(del({ gestationalWeeks: 35 }), 'PRETERM_BIRTH'), '35 weeks → preterm');
+ok(!hasD(del({ gestationalWeeks: 38 }), 'PRETERM_BIRTH'), '38 weeks is term');
+ok(hasD(del({ gestationalWeeks: 42 }), 'POST_TERM_BIRTH'), '42 weeks → post-term');
+
+// ── place and attendant: quality signals, never clinical ────────────────────
+ok(hasD(del({ attendant: 'dukun', place: 'rumah' }), 'UNSKILLED_ATTENDANT'), 'dukun noted');
+eq(del({ attendant: 'dukun', place: 'rumah' }).find((f) => f.type === 'UNSKILLED_ATTENDANT')!.severity,
+   'INFO', 'and noted as INFO — a transport problem, not a rebuke');
+ok(hasD(del({ attendant: 'bidan', place: 'rumah' }), 'HOME_BIRTH_SKILLED'), 'skilled home birth noted');
+ok(!hasD(del({ attendant: 'bidan', place: 'puskesmas' }), 'UNSKILLED_ATTENDANT'), 'facility birth is quiet');
+
+// ── a normal birth says nothing ─────────────────────────────────────────────
+eq(del({
+  gestationalWeeks: 39, place: 'puskesmas', attendant: 'bidan', mode: 'spontan',
+  bloodLossMl: 200, motherOutcome: 'hidup',
+  babies: [{ order: 1, outcome: 'hidup', weightGrams: 3100, criedImmediately: true,
+             imd: true, vitaminK: true, hepatitisB0: true }],
+}).length, 0, 'an uncomplicated facility birth raises nothing at all');
 
 // ═══ report ══════════════════════════════════════════════════════════════════
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

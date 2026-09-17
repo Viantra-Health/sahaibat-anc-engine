@@ -1,3 +1,7 @@
 node_modules
 *.log
 .DS_Store
+
+# GitHub Desktop once created a nested clone here. It is not a submodule
+# and must never be committed.
+sahaibat-anc-engine/
