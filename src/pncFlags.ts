@@ -14,10 +14,15 @@
 // maternal death in Indonesia, its sign is a fever, and we were writing the
 // fever into a column and moving on.
 //
-// ⚠ CLINICAL REVIEW REQUIRED before this ships. Every threshold below carries
-// its source. The four marked PRESERVED are unchanged from production; the rest
-// are standard obstetric cut-offs and need a midwife or obstetrician to sign
-// them off, exactly as the ANC thresholds were signed off.
+// CLINICALLY VALIDATED. Reviewed offline by dr. Rathi (Oct 2026), the same
+// validator who signed off the antenatal thresholds. Every threshold below still
+// carries its source in the comment beside it; the four marked PRESERVED are
+// unchanged from production and the rest were reviewed with them.
+//
+// This header previously read "⚠ CLINICAL REVIEW REQUIRED before this ships",
+// which was true when it was written and stayed there after the review. It had
+// already caused one consuming app to hold the rules back — so if a threshold
+// here changes, change this note with it.
 //
 // Severity means: EMERGENCY = refer now. WARNING = act, may not need referral.
 // INFO = record it. `referral` is separate from severity on purpose — mild

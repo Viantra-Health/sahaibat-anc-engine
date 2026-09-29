@@ -28,7 +28,16 @@
 // authors; the app's job is to make sure she is never re-deriving the standard
 // from memory at the end of a twelve-hour day.
 //
-// ⚠ EVERY LINE NEEDS CLINICAL REVIEW BEFORE THIS SHIPS TO A REAL DISTRICT.
+// ⚠ NOT YET CLINICALLY VALIDATED — and unlike the flag sets, this one is a
+// different class of claim.
+//
+// The antenatal, postnatal and newborn THRESHOLDS were reviewed by dr. Rathi in
+// Oct 2026. This file was not part of that pass, and it should not be assumed to
+// be covered by it: a threshold says "refer", and this says "give" — an action
+// taken on the patient rather than a decision to send them somewhere safer.
+//
+// So it stays out of the consuming apps until it is reviewed on its own terms.
+// SahAIbat-dok deliberately does not import it (see lib/forms/flags.ts there).
 //   Reviewer, read this file as a list of standing orders, because that is how
 //   it will read on a phone at 6am. Dosages are deliberately sparse: where the
 //   national protocol is specific and safe for a midwife to act on alone it is

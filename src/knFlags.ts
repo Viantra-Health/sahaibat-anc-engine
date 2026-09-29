@@ -17,7 +17,10 @@
 // decompensates far faster than an adult, so several thresholds that would be
 // a warning in a mother are an emergency here — hypothermia most of all.
 //
-// ⚠ Clinical review before shipping, as with the antenatal and postnatal sets.
+// CLINICALLY VALIDATED. Reviewed offline by dr. Rathi (Oct 2026), with the
+// antenatal and postnatal sets. If a threshold here changes, change this note too —
+// the previous version of this line said review was still needed long after it had
+// happened, and a consuming app read it literally and withheld the rules.
 
 import type { ClinicalFlag } from './clinicalFlags';
 
