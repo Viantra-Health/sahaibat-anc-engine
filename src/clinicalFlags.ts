@@ -31,6 +31,24 @@ export interface AncClinicalInput {
    hbsagStatus?: string | null;
    bloodSugarMg?: number | null;
    malariaRdt?: string | null;
+  /**
+   * Maternal temperature in degrees Celsius, or null when not taken.
+   *
+   * NULL IS NOT "NO FEVER". Many midwives have no thermometer, and a silent
+   * downgrade for want of equipment is the failure the postnatal set already
+   * guards against. Which is why feverLast48h exists beside it.
+   */
+  temperatureC?: number | null;
+  /**
+   * Did she have a fever in the last 48 hours? null when not asked.
+   *
+   * This is in the Kemenkes malaria rule verbatim -- "fever, OR a history of
+   * fever within the last 48 hours" -- and it is the clinically important
+   * case: a woman afebrile at ten in the morning who had rigors at three.
+   * It also needs no thermometer, which in a village is the difference
+   * between a rule that fires and one that cannot.
+   */
+  feverLast48h?: boolean | null;
    // Phase B
   usgResults?: { plasenta: string | null; ketuban: string | null; kelainanJanin: string | null; tbjGram: number | null; catatan: string | null } | null;
    // Phase C
@@ -223,10 +241,82 @@ export function generateClinicalFlags(data: AncClinicalInput): ClinicalFlag[] {
   }
  
   // Malaria RDT positive
-  if (data.malariaRdt && data.malariaRdt.toLowerCase().includes('positif')) {
+  const malariaPositive = !!data.malariaRdt && data.malariaRdt.toLowerCase().includes('positif');
+  if (malariaPositive) {
     flags.push({ type: 'MALARIA_POSITIVE', severity: 'EMERGENCY', referral: true,
       message_id: '🔴 MALARIA POSITIF — RUJUK untuk pengobatan antimalarial. Kehamilan berisiko tinggi.',
       message_en: '🔴 MALARIA POSITIVE — REFER for antimalarial treatment. High-risk pregnancy.' });
+  }
+
+  // ═══ FEVER IN PREGNANCY, AND THE TEST IT IS SUPPOSED TO TRIGGER ══════════
+  //
+  // WHY THIS SET EXISTS
+  //
+  // MALARIA_POSITIVE above has been here since v1 and was almost unreachable,
+  // because nothing told a midwife to run the test. The Kemenkes malaria
+  // pocket book is explicit: every person in an endemic area with fever, OR a
+  // history of fever in the last 48 hours, must be tested by microscope or
+  // RDT. There was no way to record a temperature in pregnancy at all, so the
+  // rule could only fire if she happened to do an RDT unprompted. Papua
+  // carries the great majority of Indonesia's malaria burden, and untreated
+  // malaria in pregnancy causes miscarriage, preterm birth, low birth weight
+  // and stillbirth.
+  //
+  // WHY 38.0 WARNS RATHER THAN REFERS, UNLIKE THE POSTNATAL SET
+  //
+  // There, 38.0 is an emergency: puerperal sepsis kills in hours. A fever at
+  // twenty weeks in an endemic village is usually malaria, dengue or typhoid.
+  // Auto-referring every 38.0 in Papua would bury the referral list in noise
+  // and teach her to ignore it, which costs us the flag for the cases that
+  // need it. So the response to a fever is the TEST, and the referral follows
+  // the result.
+  //
+  // Thresholds reviewed and approved 2026-10-12. The 37.5 low-grade band and
+  // the 35.5 hypothermia rule are deliberately identical to pncFlags, so a
+  // midwife learns one set of numbers rather than two.
+  {
+    const t = data.temperatureC;
+    const hasTemp = t != null;
+    const febrileNow = hasTemp && t >= 38.0;
+    const feverHistory = data.feverLast48h === true;
+
+    if (hasTemp && t >= 39.0) {
+      flags.push({ type: 'HIGH_FEVER_PREGNANCY', severity: 'EMERGENCY', referral: true,
+        message_id: `🔴 DEMAM TINGGI — suhu ${t}°C (≥ 39°C). Risiko bagi ibu dan janin. Curiga malaria berat atau infeksi berat. RUJUK SEGERA.`,
+        message_en: `🔴 HIGH FEVER — ${t}°C (≥ 39°C). A risk to mother and baby. Suspect severe malaria or serious infection. REFER NOW.` });
+    } else if (febrileNow) {
+      flags.push({ type: 'FEVER_PREGNANCY', severity: 'WARNING', referral: false,
+        message_id: `🟡 DEMAM — suhu ${t}°C (≥ 38°C). Cari penyebabnya. Pantau, ukur ulang, dan rujuk bila memburuk.`,
+        message_en: `🟡 FEVER — ${t}°C (≥ 38°C). Look for the cause. Monitor, recheck, and refer if she worsens.` });
+    } else if (hasTemp && t >= 37.5) {
+      flags.push({ type: 'LOW_GRADE_FEVER', severity: 'WARNING', referral: false,
+        message_id: `🟡 Suhu ${t}°C — pantau, ukur ulang dalam 4 jam.`,
+        message_en: `🟡 Temperature ${t}°C — monitor, recheck in 4 hours.` });
+    }
+
+    // Hypothermia is a sign of severe sepsis, not of being cold. Same
+    // threshold and the same severity as the postnatal set.
+    if (hasTemp && t < 35.5) {
+      flags.push({ type: 'HYPOTHERMIA', severity: 'EMERGENCY', referral: true,
+        message_id: `🔴 HIPOTERMIA — suhu ${t}°C. Tanda sepsis berat. RUJUK SEGERA.`,
+        message_en: `🔴 HYPOTHERMIA — ${t}°C. A sign of severe sepsis. REFER NOW.` });
+    }
+
+    /* THE RULE THAT MAKES THE RDT HAPPEN.
+       Fires on a fever now OR a fever in the last 48 hours, which is the
+       Kemenkes wording, and only while the test has not been done -- a
+       negative result is an answer, and repeating the instruction after she
+       has complied is how a prompt becomes noise. A positive result has
+       already raised MALARIA_POSITIVE above. */
+    if ((febrileNow || feverHistory) && !data.malariaRdt) {
+      flags.push({ type: 'MALARIA_TEST_REQUIRED', severity: 'WARNING', referral: false,
+        message_id: febrileNow
+          ? '🟡 WAJIB PERIKSA MALARIA — ada demam. Lakukan RDT atau mikroskop sekarang (aturan Kemenkes untuk daerah endemis).'
+          : '🟡 WAJIB PERIKSA MALARIA — ada riwayat demam 48 jam terakhir. Lakukan RDT atau mikroskop sekarang (aturan Kemenkes untuk daerah endemis).',
+        message_en: febrileNow
+          ? '🟡 MALARIA TEST REQUIRED — she has a fever. Do an RDT or microscopy now (Kemenkes rule for endemic areas).'
+          : '🟡 MALARIA TEST REQUIRED — fever in the last 48 hours. Do an RDT or microscopy now (Kemenkes rule for endemic areas).' });
+    }
   }
 
     // ═══ PHASE B: USG FLAGS ═══

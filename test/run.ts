@@ -598,6 +598,68 @@ eq(planToFields(plan(['KEK']), 'en').t10, 'Next visit in 2 weeks', 'English is a
   ok(!(dayOne.some((f) => f.type === 'KN_AGE_UNKNOWN')), 'a known age does not claim the rules were skipped');
 }
 
+// ── FEVER IN PREGNANCY, AND THE MALARIA TEST IT TRIGGERS ────────────────────
+// Thresholds approved 2026-10-12. The point of this set is that MALARIA_POSITIVE
+// existed from v1 and was almost unreachable: nothing told her to run the test.
+{
+  const anc = (over: Record<string, unknown>) =>
+    generateClinicalFlags(base(over) as any);
+  const types = (fs: ReturnType<typeof generateClinicalFlags>) => fs.map((f) => f.type);
+
+  // The ladder.
+  ok(types(anc({ temperatureC: 39.2 })).includes('HIGH_FEVER_PREGNANCY'),
+     '39.2 is a high fever');
+  ok(anc({ temperatureC: 39.2 }).some((f) => f.type === 'HIGH_FEVER_PREGNANCY' && f.severity === 'EMERGENCY' && f.referral),
+     '...and refers');
+  ok(types(anc({ temperatureC: 38.2 })).includes('FEVER_PREGNANCY'),
+     '38.2 is a fever');
+  ok(anc({ temperatureC: 38.2 }).every((f) => f.type !== 'FEVER_PREGNANCY' || (f.severity === 'WARNING' && !f.referral)),
+     '...and WARNS rather than referring, unlike the postnatal set');
+  ok(types(anc({ temperatureC: 37.6 })).includes('LOW_GRADE_FEVER'),
+     '37.6 is low grade');
+  ok(types(anc({ temperatureC: 37.4 })).length === 0,
+     '37.4 raises nothing at all');
+  ok(anc({ temperatureC: 35.2 }).some((f) => f.type === 'HYPOTHERMIA' && f.severity === 'EMERGENCY' && f.referral),
+     '35.2 is hypothermia, a sepsis sign, and refers');
+
+  // Exact boundaries, because these are the numbers that were signed off.
+  ok(types(anc({ temperatureC: 38.0 })).includes('FEVER_PREGNANCY'), '38.0 exactly is a fever');
+  ok(types(anc({ temperatureC: 39.0 })).includes('HIGH_FEVER_PREGNANCY'), '39.0 exactly is high');
+  ok(!types(anc({ temperatureC: 39.0 })).includes('FEVER_PREGNANCY'), '39.0 is not also the lower band');
+  ok(types(anc({ temperatureC: 37.5 })).includes('LOW_GRADE_FEVER'), '37.5 exactly is low grade');
+  ok(types(anc({ temperatureC: 35.5 })).includes('LOW_GRADE_FEVER') === false
+     && !types(anc({ temperatureC: 35.5 })).includes('HYPOTHERMIA'),
+     '35.5 exactly is not yet hypothermia');
+
+  // THE RULE THAT MAKES THE TEST HAPPEN -- the whole reason for this set.
+  ok(types(anc({ temperatureC: 38.4 })).includes('MALARIA_TEST_REQUIRED'),
+     'a fever requires the malaria test');
+  ok(types(anc({ feverLast48h: true })).includes('MALARIA_TEST_REQUIRED'),
+     'a fever in the last 48 hours requires it too, with no thermometer at all');
+  ok(!types(anc({ feverLast48h: false })).includes('MALARIA_TEST_REQUIRED'),
+     'answering no does not require it');
+  ok(!types(anc({})).includes('MALARIA_TEST_REQUIRED'),
+     'not asking does not require it -- absent is not a fever');
+  ok(!types(anc({ temperatureC: 38.4, malariaRdt: 'negatif' })).includes('MALARIA_TEST_REQUIRED'),
+     'a negative result is an answer: stop asking');
+  ok(!types(anc({ temperatureC: 38.4, malariaRdt: 'positif' })).includes('MALARIA_TEST_REQUIRED'),
+     'a positive result is an answer too');
+  ok(types(anc({ temperatureC: 38.4, malariaRdt: 'positif' })).includes('MALARIA_POSITIVE'),
+     'and a positive result is the emergency it always was');
+
+  // NULL IS NOT NO FEVER. A midwife with no thermometer must not be
+  // silently downgraded -- the same rule the postnatal set already holds.
+  ok(types(anc({ temperatureC: null })).length === 0, 'no temperature raises nothing');
+  ok(types(anc({ temperatureC: null, feverLast48h: true })).includes('MALARIA_TEST_REQUIRED'),
+     'but the history question still works without one');
+
+  // Temperature is NOT one of the ten. Adding it must not move any denominator.
+  const sParams = { gestationalWeeks: 28, t1WeightKg: 55, t2BpSystolic: 110, t2BpDiastolic: 70 } as any;
+  const before = score10T(sParams);
+  const after = score10T({ ...sParams, temperatureC: 38.5 } as any);
+  eq(after.score, before.score, 'a temperature does not change the 10T score');
+}
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 if (failures.length) {
   for (const f of failures) console.error(`  ✗ ${f}`);
