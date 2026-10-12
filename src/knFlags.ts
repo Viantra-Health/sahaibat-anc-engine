@@ -25,8 +25,21 @@
 import type { ClinicalFlag } from './clinicalFlags';
 
 export interface KnInput {
-  /** Days since birth. 0 is the day of delivery. */
-  dayOfLife: number;
+  /**
+   * Days since birth. 0 is the day of delivery.
+   *
+   * NULL MEANS NOBODY WROTE IT DOWN, AND THAT IS NOT DAY ZERO. The Bidan app
+   * coerced a blank field to 0 before sending it here, because this was typed
+   * `number` and would not take anything else — so a visit with no age
+   * recorded was assessed as a birth-day visit, and day 0 is a real value that
+   * decides which jaundice rule applies. End-to-end testing caught a saved
+   * record reading "usia ? hari" on screen and day 0 in the database.
+   *
+   * Every rule below that reads the day is now guarded. None of them fires on
+   * a null, and KN_AGE_UNKNOWN says so rather than leaving the silence to be
+   * read as reassurance.
+   */
+  dayOfLife: number | null;
   /** Weight at this visit, grams. */
   weightGrams?: number | null;
   /** Birth weight, to measure the change against. */
@@ -70,6 +83,10 @@ export function knForDay(days: number): 'KN1' | 'KN2' | 'KN3' | null {
 export function generateKnFlags(d: KnInput): ClinicalFlag[] {
   const flags: ClinicalFlag[] = [];
   const day = d.dayOfLife;
+  /* Guarded once, read everywhere below. A rule that needs the age and does
+     not have it must not run — the alternative is a rule answering a question
+     nobody asked. */
+  const hasDay = day != null;
 
   // ═══ DANGER SIGNS — MTBM, any one of these is a referral ═════════════════
   if (d.convulsions === true) {
@@ -136,6 +153,18 @@ export function generateKnFlags(d: KnInput): ClinicalFlag[] {
     });
   }
 
+  // ═══ THE AGE IS MISSING, SO THE AGE-BASED RULES DID NOT RUN ══════════════
+  // Said out loud. A screen that simply shows no jaundice flag for a baby
+  // whose age nobody recorded looks exactly like a screen that checked and
+  // found nothing.
+  if (!hasDay) {
+    flags.push({
+      type: 'KN_AGE_UNKNOWN', severity: 'WARNING', referral: false,
+      message_id: 'ℹ️ Usia bayi belum dicatat — aturan ikterus, imunisasi dan berat menurut hari tidak dijalankan.',
+      message_en: 'ℹ️ The age is not recorded — the day-based jaundice, immunisation and weight rules did not run.',
+    });
+  }
+
   // ═══ JAUNDICE — the day it appears is the whole diagnosis ════════════════
   if (d.jaundicePalmsSoles === true) {
     flags.push({
@@ -144,7 +173,7 @@ export function generateKnFlags(d: KnInput): ClinicalFlag[] {
       message_en: '🔴 JAUNDICE REACHING PALMS OR SOLES — kernicterus risk. REFER NOW.',
     });
   } else if (d.jaundice === true) {
-    if (day <= 1) {
+    if (hasDay && day! <= 1) {
       // Jaundice in the first 24 hours is pathological until proven otherwise;
       // physiological jaundice does not appear that early.
       flags.push({
@@ -152,7 +181,7 @@ export function generateKnFlags(d: KnInput): ClinicalFlag[] {
         message_id: '🔴 IKTERUS PADA HARI PERTAMA — selalu patologis. RUJUK SEGERA.',
         message_en: '🔴 JAUNDICE ON DAY ONE — always pathological. REFER NOW.',
       });
-    } else if (day > 14) {
+    } else if (hasDay && day! > 14) {
       flags.push({
         type: 'KN_JAUNDICE_PROLONGED', severity: 'WARNING', referral: true,
         message_id: `🟡 IKTERUS MENETAP — hari ke-${day} (> 14 hari). Perlu pemeriksaan lanjut.`,
@@ -180,7 +209,7 @@ export function generateKnFlags(d: KnInput): ClinicalFlag[] {
         message_id: `🔴 BERAT TURUN ${lostPct.toFixed(0)}% dari lahir (> 10%) — masalah menyusu. RUJUK.`,
         message_en: `🔴 WEIGHT DOWN ${lostPct.toFixed(0)}% from birth (> 10%) — feeding problem. REFER.`,
       });
-    } else if (day >= 14 && d.weightGrams < d.birthWeightGrams) {
+    } else if (hasDay && day! >= 14 && d.weightGrams < d.birthWeightGrams) {
       flags.push({
         type: 'KN_NOT_REGAINED', severity: 'WARNING', referral: true,
         message_id: `🟡 Berat belum kembali ke berat lahir pada hari ke-${day} — konseling menyusui, nilai perlekatan.`,
@@ -199,7 +228,7 @@ export function generateKnFlags(d: KnInput): ClinicalFlag[] {
 
   // ═══ MANDATED CARE, BY ITS OWN DEADLINE ══════════════════════════════════
   // Only an explicit false counts. Unrecorded is not undone.
-  if (d.hepatitisB0 === false && day >= 1) {
+  if (d.hepatitisB0 === false && hasDay && day! >= 1) {
     flags.push({
       type: 'KN_NO_HB0', severity: 'WARNING', referral: false,
       message_id: '🟡 HB0 belum diberikan — idealnya dalam 24 jam pertama, berikan sesegera mungkin.',
@@ -213,14 +242,14 @@ export function generateKnFlags(d: KnInput): ClinicalFlag[] {
       message_en: '🟡 Vitamin K1 not given — bleeding risk. Give now.',
     });
   }
-  if (d.bcg === false && day >= 7) {
+  if (d.bcg === false && hasDay && day! >= 7) {
     flags.push({
       type: 'KN_NO_BCG', severity: 'INFO', referral: false,
       message_id: 'ℹ️ BCG belum diberikan — jadwalkan sebelum usia 1 bulan.',
       message_en: 'ℹ️ BCG not given — schedule before one month.',
     });
   }
-  if (d.polio0 === false && day >= 7) {
+  if (d.polio0 === false && hasDay && day! >= 7) {
     flags.push({
       type: 'KN_NO_POLIO0', severity: 'INFO', referral: false,
       message_id: 'ℹ️ Polio 0 belum diberikan — jadwalkan.',
@@ -229,7 +258,7 @@ export function generateKnFlags(d: KnInput): ClinicalFlag[] {
   }
   // SHK is a heel prick sent to a laboratory, so this prompts the sample being
   // taken rather than a result being known. Its window is 48–72 hours.
-  if (d.shk === false && day >= 3) {
+  if (d.shk === false && hasDay && day! >= 3) {
     flags.push({
       type: 'KN_NO_SHK', severity: 'WARNING', referral: false,
       message_id: `ℹ️ SHK belum diambil (hari ke-${day}) — idealnya 48–72 jam. Ambil sampel sesegera mungkin.`,
@@ -238,7 +267,7 @@ export function generateKnFlags(d: KnInput): ClinicalFlag[] {
   }
 
   // ═══ SCHEDULE ════════════════════════════════════════════════════════════
-  if (day > 28) {
+  if (hasDay && day! > 28) {
     flags.push({
       type: 'KN_OUT_OF_WINDOW', severity: 'INFO', referral: false,
       message_id: `ℹ️ Hari ke-${day} sudah di luar masa neonatal (28 hari) — lanjutkan pemantauan di Posyandu.`,

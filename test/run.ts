@@ -573,6 +573,31 @@ ok(new Set(codes(plan(['KEK', 'BMI_UNDERWEIGHT']))).size === codes(plan(['KEK', 
 eq(planToFields(plan(['KEK']), 'en').t10, 'Next visit in 2 weeks', 'English is a full translation, not a fallback');
 
 // ═══ report ══════════════════════════════════════════════════════════════════
+/* ── AN UNRECORDED AGE IS NOT DAY ZERO ──────────────────────────────────────
+   dayOfLife was typed `number`, so the Bidan app coerced a blank field to 0
+   before sending it. A visit with no age recorded was therefore assessed as a
+   birth-day visit, and day 0 decides which jaundice rule applies — end-to-end
+   testing found a record reading "usia ? hari" on screen and day 0 stored.
+
+   Null now means not recorded, every day-dependent rule is guarded, and the
+   engine says the rules did not run rather than leaving the silence to read
+   as reassurance. */
+{
+  const noAge = kn({ dayOfLife: null, jaundice: true });
+  ok(!(noAge.some((f) => f.type === 'KN_JAUNDICE_DAY1')), 'a null age does not fire the day-one jaundice rule');
+  ok(!(noAge.some((f) => f.type === 'KN_JAUNDICE_PROLONGED')), 'nor the prolonged one');
+  ok(noAge.some((f) => f.type === 'KN_AGE_UNKNOWN'), 'and it says the age-based rules did not run');
+
+  // The rule that needs no day must be unaffected: this is the emergency.
+  const palms = kn({ dayOfLife: null, jaundice: true, jaundicePalmsSoles: true });
+  ok(palms.some((f) => f.type === 'KN_JAUNDICE_SEVERE' && f.severity === 'EMERGENCY'), 'palms and soles is still an emergency with no age');
+
+  // And a real day still behaves exactly as before.
+  const dayOne = kn({ dayOfLife: 1, jaundice: true });
+  ok(dayOne.some((f) => f.type === 'KN_JAUNDICE_DAY1'), 'day one jaundice is unchanged');
+  ok(!(dayOne.some((f) => f.type === 'KN_AGE_UNKNOWN')), 'a known age does not claim the rules were skipped');
+}
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 if (failures.length) {
   for (const f of failures) console.error(`  ✗ ${f}`);
