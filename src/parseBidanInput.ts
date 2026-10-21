@@ -28,19 +28,26 @@ export interface ParsedAncInit {
 }
 
 export interface ParsedAncData {
-  t1WeightKg: number | null;
-  t2BpSystolic: number | null;
+  /* IN THE STANDARD'S ORDER, which is also now the standard's numbering.
+     These used to run t1..t10 in this file's own sequence, and six of them
+     named the wrong activity — see the header of score10T.ts. Renumbered
+     20 Oct 2026. */
+  t1WeightKg: number | null;            // T1  timbang
+  t2BpSystolic: number | null;          // T2  tekanan darah
   t2BpDiastolic: number | null;
-  t3FundalHeightCm: number | null;
-  t4TtStatus: string | null;
-  t5FeTablets: number | null;
-  t6LabHb: number | null;
-  t6LabProtein: string | null;
-  t6LabOther: Record<string, any> | null;
-  t7CounsellingTopics: string[] | null;
-  t8Presentation: string | null;
-  t9CaseManagement: string | null;
-  t10FollowupPlan: string | null;
+  // T3 is nilai status gizi and is carried as lilaCm below, keeping the
+  // measurement's own name — it is also the sahai_anc_visits column name.
+  t4FundalHeightCm: number | null;      // T4  tinggi fundus uteri   (was t3)
+  t5Presentation: string | null;        // T5  presentasi janin      (was t8)
+  t6TtStatus: string | null;            // T6  imunisasi tetanus     (was t4)
+  t7FeTablets: number | null;           // T7  tablet tambah darah   (was t5)
+  t8LabHb: number | null;               // T8  laboratorium          (was t6)
+  t8LabProtein: string | null;
+  t8LabOther: Record<string, any> | null;
+  t9CaseManagement: string | null;      // T9  tata laksana kasus
+  t10CounsellingTopics: string[] | null; // T10 temu wicara          (was t7)
+  /** NOT one of the ten, and no longer scored. Was t10. */
+  followupPlan: string | null;
   complaints: string | null;
   // New Buku KIA fields
   motherHeightCm: number | null;
@@ -99,10 +106,10 @@ export function parseAncData(message: string): ParsedAncData {
   const textLower = text.toLowerCase();
   const result: ParsedAncData = {
     t1WeightKg: null, t2BpSystolic: null, t2BpDiastolic: null,
-    t3FundalHeightCm: null, t4TtStatus: null, t5FeTablets: null,
-    t6LabHb: null, t6LabProtein: null, t6LabOther: null,
-    t7CounsellingTopics: null, t8Presentation: null,
-    t9CaseManagement: null, t10FollowupPlan: null,
+    t4FundalHeightCm: null, t6TtStatus: null, t7FeTablets: null,
+    t8LabHb: null, t8LabProtein: null, t8LabOther: null,
+    t10CounsellingTopics: null, t5Presentation: null,
+    t9CaseManagement: null, followupPlan: null,
     complaints: null,
     motherHeightCm: null, lilaCm: null, djjBpm: null, bloodType: null,
     hivStatus: null, syphilisStatus: null, hbsagStatus: null,
@@ -125,35 +132,35 @@ export function parseAncData(message: string): ParsedAncData {
 
   // T3: Fundal height - "TFU 26" or "fundus 26"
   const tfuMatch = textLower.match(/\b(?:tfu|fundus|tinggi\s*fundus)\s*:?\s*(\d{1,2}(?:[.,]\d)?)/);
-  if (tfuMatch) result.t3FundalHeightCm = num(tfuMatch[1]);
+  if (tfuMatch) result.t4FundalHeightCm = num(tfuMatch[1]);
 
   // T4: TT status - "TT lengkap" or "TT2+"
   // \b...\b around `tt` so "TTD 90" (Tablet Tambah Darah = iron) is not read
   // as tetanus status "d". Without the boundary `tt` matched the first two
   // letters of TTD and captured whatever followed.
   const ttMatch = textLower.match(/\b(?:tt(?!d)|tetanus)\s*:?\s*([\w+]+)/);
-  if (ttMatch) result.t4TtStatus = ttMatch[1];
+  if (ttMatch) result.t6TtStatus = ttMatch[1];
 
   // T5: Fe tablets - "Fe 30" or "tablet fe 30"
   const feMatch = textLower.match(/\b(?:fe|tablet\s*fe|zat\s*besi|ttd|tablet\s*tambah\s*darah)\b\s*:?\s*(\d{1,3})\s*(?:tablet)?/);
-  if (feMatch) result.t5FeTablets = parseInt(feMatch[1]);
+  if (feMatch) result.t7FeTablets = parseInt(feMatch[1]);
 
   // T6: Lab - Hb
   const hbMatch = textLower.match(/\b(?:hb|haemoglobin|hemoglobin)\s*:?\s*(\d{1,2}(?:[.,]\d{1,2})?)/);
-  if (hbMatch) result.t6LabHb = num(hbMatch[1]);
+  if (hbMatch) result.t8LabHb = num(hbMatch[1]);
 
   // T6: Lab - Protein
   const protMatch = textLower.match(/(?:protein|proteinuria)\s*:?\s*([+-]?\+{0,3}|\d)/);
   if (protMatch) {
     const val = protMatch[1];
-    result.t6LabProtein = val === '-' || val === '0' ? '-' : val.includes('+') ? val : `+${val}`;
+    result.t8LabProtein = val === '-' || val === '0' ? '-' : val.includes('+') ? val : `+${val}`;
   }
-  if (!result.t6LabProtein) {
+  if (!result.t8LabProtein) {
     if (textLower.includes('protein +') || textLower.includes('protein positif')) {
       const pMatch = textLower.match(/protein\s*\+?(\d)?/);
-      result.t6LabProtein = pMatch && pMatch[1] ? `+${pMatch[1]}` : '+1';
+      result.t8LabProtein = pMatch && pMatch[1] ? `+${pMatch[1]}` : '+1';
     } else if (textLower.includes('protein -') || textLower.includes('protein negatif')) {
-      result.t6LabProtein = '-';
+      result.t8LabProtein = '-';
     }
   }
 
@@ -161,12 +168,12 @@ export function parseAncData(message: string): ParsedAncData {
   const konMatch = text.match(/(?:konseling|counselling|temu\s*wicara|edukasi)\s*:?\s*(.+?)(?=,\s*(?:presentasi|keluhan|tindak|tata|lila|djj|golda)|$)/i);
   if (konMatch) {
     const topics = konMatch[1].split(/[,;]/).map(t => t.trim()).filter(t => t.length > 0);
-    if (topics.length > 0) result.t7CounsellingTopics = topics;
+    if (topics.length > 0) result.t10CounsellingTopics = topics;
   }
 
   // T8: Presentation - "Presentasi kepala" or "letak sungsang"
   const presMatch = textLower.match(/(?:presentasi|letak)\s*:?\s*(kepala|cephalic|sungsang|breech|lintang|transverse|belum)/);
-  if (presMatch) result.t8Presentation = presMatch[1];
+  if (presMatch) result.t5Presentation = presMatch[1];
 
   // T9: Case management - "Tatalaksana normal" or "tata laksana rujuk"
   const tataMatch = text.match(/(?:tata\s*laksana|tatalaksana|case\s*management)\s*:?\s*(.+?)(?=,\s*(?:tindak|keluhan|lila|djj)|$)/i);
@@ -174,7 +181,7 @@ export function parseAncData(message: string): ParsedAncData {
 
   // T10: Follow-up - "Tindak lanjut kontrol 4 minggu"
   const tlMatch = text.match(/(?:tindak\s*lanjut|follow[\s-]*up)\s*:?\s*(.+?)(?=,\s*(?:keluhan|lila|djj)|$)/i);
-  if (tlMatch) result.t10FollowupPlan = tlMatch[1].trim();
+  if (tlMatch) result.followupPlan = tlMatch[1].trim();
 
   // Complaints - "Keluhan sakit kepala"
   const keluhanMatch = text.match(/(?:keluhan|complaint)\s*:?\s*(.+?)(?=,\s*(?:konseling|presentasi|tata|tindak|lila|djj|golda|tb\s*ibu|tinggi\s*ibu)|$)/i);
