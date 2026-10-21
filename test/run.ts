@@ -17,6 +17,9 @@ import { generatePncFlags, shouldReferPnc, kfForDay } from '../src/pncFlags';
 import { generateDeliveryFlags, shouldReferDelivery, linakes } from '../src/deliveryFlags';
 import { generateKnFlags, shouldReferKn, knForDay } from '../src/knFlags';
 import { suggestCarePlan, planToFields } from '../src/carePlan';
+import {
+  VACCINE_SCHEDULE, translateLegacy, immunisationStatus, unmatchedGiven, nextDue, immunisationSummary,
+} from '../src/immunisation';
 
 let pass = 0;
 const failures: string[] = [];
@@ -57,11 +60,11 @@ eq(d.t1WeightKg, 58, 'BB');
 eq(d.motherHeightCm, 155, 'TB');
 eq(d.t2BpSystolic, 150, 'TD systolic');
 eq(d.t2BpDiastolic, 95, 'TD diastolic');
-eq(d.t3FundalHeightCm, 26, 'TFU');
+eq(d.t4FundalHeightCm, 26, 'TFU');
 eq(d.lilaCm, 22, 'LILA');
 eq(d.djjBpm, 140, 'DJJ');
-eq(d.t5FeTablets, 30, 'Fe tablets');
-eq(d.t6LabHb, 9.8, 'Hb — decimal preserved');
+eq(d.t7FeTablets, 30, 'Fe tablets');
+eq(d.t8LabHb, 9.8, 'Hb — decimal preserved');
 ok(!!d.complaints, 'complaints captured');
 ok(d.rawInput.length > 0, 'raw input preserved verbatim for later re-parsing');
 
@@ -70,7 +73,7 @@ ok(d.rawInput.length > 0, 'raw input preserved verbatim for later re-parsing');
 const empty = parseAncData('tidak ada apa-apa');
 eq(empty.t1WeightKg, null, 'missing weight is null, not 0');
 eq(empty.t2BpSystolic, null, 'missing BP is null, not 0');
-eq(empty.t6LabHb, null, 'missing Hb is null, not 0');
+eq(empty.t8LabHb, null, 'missing Hb is null, not 0');
 
 // ═══ parsePncInit ════════════════════════════════════════════════════════════
 eq(parsePncInit('KF2, Siti Aminah, hari ke-7')?.visitType, 'KF2', 'PNC visit type');
@@ -85,28 +88,28 @@ eq(calculateBMI(null, 155).bmi, null, 'missing weight → null, not a guess');
 // ═══ score10T — the gestational-age adjustment is the subtle part ════════════
 const full = {
   gestationalWeeks: 38,
-  t1WeightKg: 58, t2BpSystolic: 120, t2BpDiastolic: 80, t3FundalHeightCm: 30,
-  t4TtStatus: 'lengkap', t5FeTablets: 30, t6LabHb: 11.5, t6LabProtein: '-',
-  t7CounsellingTopics: ['gizi'], t8Presentation: 'kepala',
-  t9CaseManagement: 'normal', t10FollowupPlan: 'kontrol 2 minggu',
+  t1WeightKg: 58, t2BpSystolic: 120, t2BpDiastolic: 80, t4FundalHeightCm: 30,
+  t6TtStatus: 'lengkap', t7FeTablets: 30, t8LabHb: 11.5, t8LabProtein: '-',
+  t10CounsellingTopics: ['gizi'], t5Presentation: 'kepala',
+  t9CaseManagement: 'normal', followupPlan: 'kontrol 2 minggu',
 };
 eq(score10T(full).score, 10, 'everything done at term → 10/10');
 
-// T8 (presentation) is not expected before 36 weeks, so its absence must NOT
+// T5 (presentation) is not expected before 36 weeks, so its absence must NOT
 // be counted against her. Scoring it would push midwives to record a
 // measurement that is not yet clinically meaningful.
-const early = { ...full, gestationalWeeks: 28, t8Presentation: null };
+const early = { ...full, gestationalWeeks: 28, t5Presentation: null };
 eq(score10T(early).score, 10, 'presentation not expected at 28wk → still 10/10');
-ok(score10T(early).notExpected.includes('t8'), 't8 marked not-expected at 28wk');
-ok(!score10T(early).expectedButSkipped.includes('t8'), 't8 is not a gap at 28wk');
+ok(score10T(early).notExpected.includes('t5'), 't5 (presentation) marked not-expected at 28wk');
+ok(!score10T(early).expectedButSkipped.includes('t5'), 't5 (presentation) is not a gap at 28wk');
 
 // At 38 weeks it IS expected, so omitting it is a real gap.
-const lateNoPres = { ...full, t8Presentation: null };
+const lateNoPres = { ...full, t5Presentation: null };
 ok(score10T(lateNoPres).score < 10, 'presentation missing at 38wk → score drops');
-ok(score10T(lateNoPres).expectedButSkipped.includes('t8'), 't8 is a gap at 38wk');
+ok(score10T(lateNoPres).expectedButSkipped.includes('t5'), 't5 (presentation) is a gap at 38wk');
 
 // Likewise T3 before 12 weeks.
-const veryEarly = { ...full, gestationalWeeks: 8, t3FundalHeightCm: null, t8Presentation: null };
+const veryEarly = { ...full, gestationalWeeks: 8, t4FundalHeightCm: null, t5Presentation: null };
 ok(score10T(veryEarly).notExpected.includes('t3'), 'fundal height not expected at 8wk');
 
 eq(score10T({ gestationalWeeks: 28 }).score, 0, 'nothing recorded → 0');
@@ -208,15 +211,15 @@ ok(has(generateClinicalFlags(base({ lilaCm: comma('lila 23,4').lilaCm! })), 'KEK
    'LILA 23,4 IS KEK — the threshold still bites just below it');
 
 eq(comma('bb 58,5').t1WeightKg, 58.5, 'weight: comma decimal survives');
-eq(comma('hb 10,5').t6LabHb, 10.5, 'Hb: comma decimal survives');
+eq(comma('hb 10,5').t8LabHb, 10.5, 'Hb: comma decimal survives');
 eq(comma('gds 145,5').bloodSugarMg, 145.5, 'blood sugar: comma decimal survives');
-eq(comma('tfu 26,5').t3FundalHeightCm, 26.5, 'fundal height: accepts a decimal at all');
+eq(comma('tfu 26,5').t4FundalHeightCm, 26.5, 'fundal height: accepts a decimal at all');
 eq(comma('tb ibu 155,5').motherHeightCm, 155.5, 'mother height: comma decimal survives');
 
 // Hb 7,5 must still be severe anaemia — a truncation to 7 would have passed
 // this by luck, so assert the value as well as the flag.
-eq(comma('hb 7,5').t6LabHb, 7.5, 'Hb 7,5 parses exactly');
-ok(has(generateClinicalFlags(base({ labHb: comma('hb 7,5').t6LabHb! })), 'SEVERE_ANAEMIA'),
+eq(comma('hb 7,5').t8LabHb, 7.5, 'Hb 7,5 parses exactly');
+ok(has(generateClinicalFlags(base({ labHb: comma('hb 7,5').t8LabHb! })), 'SEVERE_ANAEMIA'),
    'Hb 7,5 is still severe anaemia');
 
 // Vocabulary midwives actually use.
@@ -227,11 +230,11 @@ eq(comma('timbang 60').t1WeightKg, 60, 'weight: "timbang" — the T in 10T');
 // TTD (Tablet Tambah Darah) is the standard Indonesian term for iron tablets.
 // `tt` had no word boundary, so "TTD 90" was read as tetanus status "d" and
 // the iron count was lost entirely.
-eq(comma('ttd 90').t5FeTablets, 90, 'Fe: "TTD 90" is ninety iron tablets');
-eq(comma('ttd 90').t4TtStatus, null, 'Fe: "TTD 90" is NOT a tetanus status');
-eq(comma('tt2, fe 90').t4TtStatus, '2', 'tetanus: real TT status still parses');
-eq(comma('tt lengkap').t4TtStatus, 'lengkap', 'tetanus: worded status still parses');
-eq(comma('tetanus lengkap, ttd 90').t5FeTablets, 90,
+eq(comma('ttd 90').t7FeTablets, 90, 'Fe: "TTD 90" is ninety iron tablets');
+eq(comma('ttd 90').t6TtStatus, null, 'Fe: "TTD 90" is NOT a tetanus status');
+eq(comma('tt2, fe 90').t6TtStatus, '2', 'tetanus: real TT status still parses');
+eq(comma('tt lengkap').t6TtStatus, 'lengkap', 'tetanus: worded status still parses');
+eq(comma('tetanus lengkap, ttd 90').t7FeTablets, 90,
    'tetanus and TTD in one message: both are read, neither eats the other');
 
 // ═══ POSTNATAL ═══════════════════════════════════════════════════════════════
@@ -658,6 +661,95 @@ eq(planToFields(plan(['KEK']), 'en').t10, 'Next visit in 2 weeks', 'English is a
   const before = score10T(sParams);
   const after = score10T({ ...sParams, temperatureC: 38.5 } as any);
   eq(after.score, before.score, 'a temperature does not change the 10T score');
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IMMUNISATION — the vocabulary is the interface, and it had three spellings.
+//
+// These pin the SPELLING as hard as the other blocks pin thresholds. The live
+// table holds 935 rows as `DPT_HB_HIB` + dose_number; the Kasih tracker calls
+// the same injection `DPT1` and numbers polio from zero. If a test here fails
+// because a code changed, 935 records just stopped matching the schedule.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  const codes = new Set(VACCINE_SCHEDULE.map((s) => s.code));
+  // The eight codes that actually exist in sahai_immunization_records.
+  for (const c of ['HB0', 'BCG', 'POLIO', 'DPT_HB_HIB', 'PCV', 'RV', 'IPV', 'CAMPAK_R']) {
+    ok(codes.has(c as any), `schedule speaks the live vocabulary: ${c}`);
+  }
+  // And none of the tracker's renames leaked in.
+  for (const c of ['DPT1', 'MR1', 'MR2', 'ROTA1', 'POLIO0']) {
+    ok(!codes.has(c as any), `schedule does NOT use the legacy spelling ${c}`);
+  }
+
+  // Polio from ONE, and the tracker's zero maps onto it. Getting this wrong
+  // attributes every polio dose to the wrong visit.
+  const polio = VACCINE_SCHEDULE.filter((s) => s.code === 'POLIO').map((s) => s.dose).sort();
+  eq(polio, [1, 2, 3, 4], 'oral polio is four doses numbered from one');
+  eq(translateLegacy('POLIO0'), { code: 'POLIO', dose: 1 }, 'POLIO0 is the birth drop, which is dose 1');
+  eq(translateLegacy('POLIO3'), { code: 'POLIO', dose: 4 }, 'POLIO3 is dose 4, not dose 3');
+  eq(translateLegacy('MR1'), { code: 'CAMPAK_R', dose: 1 }, 'MR1 is CAMPAK_R dose 1');
+  eq(translateLegacy('ROTA2'), { code: 'RV', dose: 2 }, 'ROTA2 is RV dose 2');
+  eq(translateLegacy('NOT_A_VACCINE'), null, 'an unrecognised legacy code is null, not a guess');
+
+  // The schedule is ordered, because a screen renders it in array order.
+  let monotonic = true;
+  for (let i = 1; i < VACCINE_SCHEDULE.length; i++) {
+    if (VACCINE_SCHEDULE[i].due_day < VACCINE_SCHEDULE[i - 1].due_day) monotonic = false;
+  }
+  ok(monotonic, 'the schedule is sorted by due day');
+
+  // category never takes a third value: the live column holds only these two.
+  ok(VACCINE_SCHEDULE.every((s) => s.category === 'dasar' || s.category === 'lanjutan'),
+     'category stays within the vocabulary the database owns');
+
+  // ── NO DATE OF BIRTH MEANS NO VERDICT ──────────────────────────────────
+  const noDob = immunisationStatus(null, []);
+  ok(noDob.every((d) => d.state === 'not_yet'), 'with no dob nothing is due');
+  ok(noDob.every((d) => d.state !== 'overdue'), 'with no dob NOTHING is overdue');
+  ok(noDob.every((d) => d.due_date === null), 'with no dob there are no due dates');
+
+  // ── DUE, THEN OVERDUE, WITH A POSYANDU-SHAPED GRACE PERIOD ─────────────
+  const bcgOn = (today: string) =>
+    immunisationStatus('2026-01-01', [], today).find((d) => d.code === 'BCG')!;
+  eq(bcgOn('2026-01-15').state, 'not_yet', 'BCG is not due at two weeks');
+  eq(bcgOn('2026-01-31').state, 'due', 'BCG is due at one month');
+  eq(bcgOn('2026-02-14').state, 'due', 'still due 14 days after the due day');
+  eq(bcgOn('2026-02-16').state, 'overdue', 'overdue once past the grace period');
+
+  // ── DONE IS MATCHED ON CODE AND DOSE TOGETHER ──────────────────────────
+  const given = [
+    { vaccine_code: 'DPT_HB_HIB', dose_number: 1, administered_date: '2026-03-05' },
+    { vaccine_code: 'DPT_HB_HIB', dose_number: 2, administered_date: null },
+  ];
+  const st = immunisationStatus('2026-01-01', given, '2027-01-01');
+  eq(st.find((d) => d.code === 'DPT_HB_HIB' && d.dose === 1)!.state, 'done', 'dose 1 recorded');
+  eq(st.find((d) => d.code === 'DPT_HB_HIB' && d.dose === 2)!.state, 'done', 'dose 2 recorded even with no date');
+  eq(st.find((d) => d.code === 'DPT_HB_HIB' && d.dose === 3)!.state, 'overdue', 'dose 3 is still owed');
+  eq(st.find((d) => d.code === 'DPT_HB_HIB' && d.dose === 1)!.given_date, '2026-03-05', 'the date given is carried');
+
+  // ── A DOSE WE CANNOT PLACE IS SHOWN, NEVER DROPPED ─────────────────────
+  const odd = [
+    { vaccine_code: 'JE', dose_number: 1, administered_date: '2026-06-01' },
+    { vaccine_code: 'BCG', dose_number: null, administered_date: '2026-02-01' },
+  ];
+  eq(unmatchedGiven(odd).length, 2, 'an unknown vaccine and a dose with no number both surface');
+  eq(immunisationStatus('2026-01-01', odd, '2026-07-01').find((d) => d.code === 'BCG')!.state,
+     'overdue', 'a BCG row with no dose number is NOT assumed to be dose 1');
+
+  // ── WHAT IS OWED NEXT: MISSED BEFORE MERELY DUE ────────────────────────
+  // Born 2026-01-01, today is 2026-03-10. BCG (day 30) is long past and not
+  // given; the 2-month doses are also open. The missed one must be named.
+  const nd = nextDue('2026-01-01', [], '2026-03-10')!;
+  eq(nd.state, 'overdue', 'nextDue reports an overdue dose, not the nearest one');
+  ok(nd.due_day <= 60, 'and it is the earliest overdue dose');
+  eq(nextDue('2026-01-01', VACCINE_SCHEDULE.map((s) => ({ vaccine_code: s.code, dose_number: s.dose })), '2030-01-01'),
+     null, 'a fully immunised child owes nothing');
+
+  const sum = immunisationSummary('2026-01-01', given, '2027-01-01');
+  eq(sum.done, 2, 'summary counts the two recorded doses');
+  eq(sum.total, VACCINE_SCHEDULE.length, 'summary totals the whole schedule');
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

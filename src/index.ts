@@ -31,3 +31,12 @@ export type { KnInput } from './knFlags';
 
 export { suggestCarePlan, planToFields } from './carePlan';
 export type { PlanItem, PlanCategory, CarePlanInput } from './carePlan';
+
+export {
+  VACCINE_SCHEDULE, LEGACY_CODE_MAP, DUE_GRACE_DAYS,
+  translateLegacy, immunisationStatus, unmatchedGiven, nextDue, immunisationSummary,
+} from './immunisation';
+export type {
+  VaccineCode, VaccineCategory, VaccineProgramme, ScheduledDose,
+  GivenDose, DoseState, DoseStatus,
+} from './immunisation';
