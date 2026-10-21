@@ -40,3 +40,13 @@ export type {
   VaccineCode, VaccineCategory, VaccineProgramme, ScheduledDose,
   GivenDose, DoseState, DoseStatus,
 } from './immunisation';
+
+export {
+  KB_METHODS, KB_GRACE_DAYS, KBPP_DAYS, KB_END_REASONS,
+  kbMethod, isKnownMethod, nextStep, counselledWithoutChoosing,
+  dueFor, kbppWindow, kbEndReason, switchedTo,
+} from './contraception';
+export type {
+  KbMethodCode, KbMethodClass, KbMethod, KbEpisodeFacts, KbStep,
+  KbDueKind, KbDueState, KbDue, KbppWindow, KbEndReason,
+} from './contraception';

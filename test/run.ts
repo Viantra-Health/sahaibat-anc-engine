@@ -18,6 +18,10 @@ import { generateDeliveryFlags, shouldReferDelivery, linakes } from '../src/deli
 import { generateKnFlags, shouldReferKn, knForDay } from '../src/knFlags';
 import { suggestCarePlan, planToFields } from '../src/carePlan';
 import {
+  nextStep, counselledWithoutChoosing, dueFor, kbppWindow, kbEndReason, switchedTo,
+} from '../src/contraception';
+import * as contraception from '../src/contraception';
+import {
   VACCINE_SCHEDULE, translateLegacy, immunisationStatus, unmatchedGiven, nextDue, immunisationSummary,
 } from '../src/immunisation';
 
@@ -790,6 +794,119 @@ eq(planToFields(plan(['KEK']), 'en').t10, 'Next visit in 2 weeks', 'English is a
   const sum = immunisationSummary('2026-01-01', given, '2027-01-01');
   eq(sum.done, 2, 'summary counts the two recorded doses');
   eq(sum.total, VACCINE_SCHEDULE.length, 'summary totals the whole schedule');
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KELUARGA BERENCANA — dates and states, and the two refusals.
+//
+// The refusals are the point. A device with no recorded life gets NO expiry
+// date, because a removal reminder on a date nobody chose is worse than none.
+// And eligibility (WHO MEC / Roda KLOP) is absent entirely: it is clinical
+// advice and no clinician has signed it here.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  // ── THE FOUR STATES ARE FOUR ─────────────────────────────────────────────
+  eq(nextStep({}), 'counsel', 'nothing recorded -> counsel');
+  eq(nextStep({ counselled_at: '2026-10-01' }), 'select', 'counselled, nothing chosen -> select');
+  eq(nextStep({ counselled_at: '2026-10-01', method_code: 'suntik_3', selected_at: '2026-10-01' }),
+     'provide', 'chosen, not given -> provide');
+  eq(nextStep({ method_code: 'suntik_3', selected_at: '2026-10-01', provided_at: '2026-10-01' }),
+     'schedule_follow_up', 'given, nothing in the diary -> schedule follow-up');
+  eq(nextStep({ counselled_at: '2026-10-01', method_code: 'pil', selected_at: '2026-10-01',
+                provided_at: '2026-10-01', follow_up_due: '2026-10-29' }),
+     'complete', 'all four facts -> complete');
+  eq(nextStep({ provided_at: '2026-01-01', ended_at: '2026-06-01' }), 'ended', 'a closed episode is ended');
+
+  // A dose provided with no counselling recorded does NOT send anybody back
+  // for a tick -- the gap is noted, the next action is the follow-up.
+  eq(nextStep({ method_code: 'implan', selected_at: '2026-10-01', provided_at: '2026-10-01' }),
+     'schedule_follow_up', 'a missing counselling tick does not rewind the episode');
+
+  // Counselled and chose nothing is a REAL outcome, not an unfinished form.
+  ok(counselledWithoutChoosing({ counselled_at: '2026-09-01' }),
+     'counselled without choosing is its own state');
+  ok(!counselledWithoutChoosing({ counselled_at: '2026-09-01', selected_at: '2026-09-01' }),
+     '...and stops being true once she chooses');
+
+  // ── METHOD-AWARE DUE DATES ───────────────────────────────────────────────
+  const d = (over: any) => dueFor({ provided_at: '2026-10-01', ...over }, '2026-10-20');
+  eq(d({ method_code: 'suntik_3' }).due_date, '2026-12-30', 'three-monthly injectable: 90 days');
+  eq(d({ method_code: 'suntik_3' }).kind, 'injection', '...and it is an injection');
+  eq(d({ method_code: 'suntik_1' }).due_date, '2026-10-31', 'monthly injectable: 30 days');
+  eq(d({ method_code: 'pil' }).due_date, '2026-10-29', 'pill cycle: 28 days');
+  eq(d({ method_code: 'pil' }).kind, 'refill', '...and it is a refill, not an injection');
+
+  // MAL is REVIEWED, not repeated. Treating it as a refill would leave a woman
+  // counted as protected.
+  eq(d({ method_code: 'mal' }).kind, 'review', 'lactational amenorrhoea is reviewed, not repeated');
+  eq(d({ method_code: 'mal' }).due_date, '2027-03-30', '...at six months');
+
+  // Permanent and barrier methods owe nothing.
+  eq(d({ method_code: 'mow' }).kind, 'none', 'sterilisation owes nothing');
+  eq(d({ method_code: 'mow' }).reason, 'method_not_recurring', '...and says why');
+  eq(d({ method_code: 'kondom' }).kind, 'none', 'condoms owe nothing on a schedule');
+
+  // ── A DEVICE WITH NO RECORDED LIFE GETS NO DATE ──────────────────────────
+  const noLife = d({ method_code: 'implan' });
+  eq(noLife.due_date, null, 'an implant with no recorded duration has NO expiry date');
+  eq(noLife.reason, 'duration_unknown', '...and says exactly why');
+  eq(noLife.state, 'unknown', '...and is not reported as not-yet-due');
+  eq(d({ method_code: 'akdr' }).reason, 'duration_unknown', 'same for an IUD');
+
+  // With a life recorded, the arithmetic follows -- in MONTHS, so a three-year
+  // implant expires on the day of the month it was inserted.
+  eq(d({ method_code: 'implan', device_months: 36 }).due_date, '2029-10-01', 'implant: 36 months');
+  eq(d({ method_code: 'implan', device_months: 36 }).kind, 'device_expiry', '...as an expiry');
+  eq(d({ method_code: 'akdr', device_months: 120 }).due_date, '2036-10-01', 'copper IUD at 120 months');
+  eq(d({ method_code: 'akdr', device_months: 60 }).due_date, '2031-10-01', 'hormonal IUD at 60 months');
+
+  // Month arithmetic must not drift off the end of a short month.
+  eq(dueFor({ method_code: 'implan', provided_at: '2026-01-31', device_months: 1 }, '2026-02-10').due_date,
+     '2026-02-28', '31 January plus one month is 28 February, not 3 March');
+
+  // ── DUE, THEN OVERDUE ────────────────────────────────────────────────────
+  const inj = (today: string) => dueFor({ method_code: 'suntik_3', provided_at: '2026-01-01' }, today);
+  eq(inj('2026-03-01').state, 'not_yet', 'not due before 90 days');
+  eq(inj('2026-04-01').state, 'due', 'due at 90 days');
+  eq(inj('2026-04-14').state, 'due', 'still due inside the grace period');
+  eq(inj('2026-04-20').state, 'overdue', 'overdue past it');
+
+  // ── NO DATE, NO VERDICT ──────────────────────────────────────────────────
+  eq(dueFor({ method_code: 'suntik_3' }).reason, 'no_service_date',
+     'a method never provided has no due date');
+  eq(dueFor({ method_code: 'suntik_3' }).state, 'unknown', '...and is not overdue');
+  eq(dueFor({ method_code: 'something_new', provided_at: '2026-01-01' }).reason, 'method_unknown',
+     'an unrecognised method yields no date but is not an error');
+  eq(dueFor({ method_code: 'suntik_3', provided_at: '2026-01-01', ended_at: '2026-02-01' }).reason,
+     'ended', 'a closed episode owes nothing');
+
+  // ── KB PASCA PERSALINAN: 42 DAYS ─────────────────────────────────────────
+  eq(kbppWindow('2026-10-01', '2026-10-10')!.state, 'open', 'KBPP window open at day 9');
+  eq(kbppWindow('2026-10-01', '2026-10-10')!.closes_on, '2026-11-12', '...closing 42 days after delivery');
+  eq(kbppWindow('2026-10-01', '2026-11-08')!.state, 'closing', 'closing inside the last week');
+  eq(kbppWindow('2026-10-01', '2026-11-20')!.state, 'closed', 'closed past 42 days');
+  eq(kbppWindow(null), null, 'no delivery date, no window');
+  // 'closed', never 'missed' -- a woman who starts on day 50 has still started.
+  ok(!['missed', 'failed'].includes(kbppWindow('2026-10-01', '2026-12-01')!.state),
+     'a closed window is never reported as missed');
+
+  // ── SWITCHING KEEPS BOTH EPISODES ────────────────────────────────────────
+  const first  = { method_code: 'suntik_3', provided_at: '2026-01-01', ended_at: '2026-06-01', end_reason: 'ganti_cara' };
+  const second = { method_code: 'implan',   provided_at: '2026-06-01', device_months: 36 };
+  eq(switchedTo(first, [first, second]), second, 'an episode ended for ganti_cara finds the one that followed');
+  // The reason alone is a claim; the next episode is the evidence.
+  eq(switchedTo(first, [first]), null,
+     'ganti_cara with nothing following is a woman who meant to switch and did not');
+  eq(switchedTo({ ...first, end_reason: 'efek_samping' }, [first, second]), null,
+     'stopping for side effects is not a switch');
+  eq(kbEndReason('GANTI_CARA'), 'ganti_cara', 'end reasons are case-insensitive');
+  eq(kbEndReason('something'), 'lainnya', 'an unknown end reason degrades to lainnya, never throws');
+
+  // ── NO ELIGIBILITY FUNCTION. Asserted, so adding one is deliberate. ──────
+  const api = Object.keys(contraception);
+  ok(!api.some((k) => /mec|eligib|klop/i.test(k)),
+     'the engine exposes NO eligibility verdict -- that needs a named clinical reviewer');
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
