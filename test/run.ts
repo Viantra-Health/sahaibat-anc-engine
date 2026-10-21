@@ -687,6 +687,43 @@ eq(planToFields(plan(['KEK']), 'en').t10, 'Next visit in 2 weeks', 'English is a
   // attributes every polio dose to the wrong visit.
   const polio = VACCINE_SCHEDULE.filter((s) => s.code === 'POLIO').map((s) => s.dose).sort();
   eq(polio, [1, 2, 3, 4], 'oral polio is four doses numbered from one');
+
+  // ── THE THREE TIMINGS THE CARRIED COPY GOT WRONG ───────────────────────
+  // Each of these is pinned because the Kasih schedule disagreed with the
+  // Ministry's published one and the disagreement was invisible.
+  const at = (code: string, dose: number) =>
+    VACCINE_SCHEDULE.find((s) => s.code === code && s.dose === dose)!.due_day;
+
+  // BIRTH IS HB0 ALONE. OPV 1 is at one month, with BCG. Shipping Kasih's
+  // version would have read every newborn as overdue for polio from the day
+  // she was born until her one-month visit.
+  eq(at('HB0', 1), 0, 'HB0 is the only dose at birth');
+  eq(at('POLIO', 1), 30, 'OPV 1 is at ONE MONTH, not at birth');
+  eq(at('BCG', 1), 30, 'BCG is at one month, beside OPV 1');
+  ok(!VACCINE_SCHEDULE.some((s) => s.due_day === 0 && s.code !== 'HB0'),
+     'nothing but HB0 is scheduled for day 0');
+
+  // IPV 2 belongs at 9 months with MR 1, not at 10.
+  eq(at('IPV', 2), 270, 'IPV 2 is at 9 months');
+  eq(at('CAMPAK_R', 1), 270, 'MR 1 is at 9 months, beside IPV 2');
+
+  // Ten months is Japanese Encephalitis, and it was missing entirely.
+  eq(at('JE', 1), 300, 'JE is at 10 months');
+  eq(VACCINE_SCHEDULE.find((s) => s.code === 'JE')!.conditional, 'endemic',
+     'JE is marked as applying only in designated areas');
+
+  // ── A CONDITIONAL DOSE IS NEVER OWED UNLESS ASKED FOR ──────────────────
+  const je = (opts?: { endemic?: boolean }) =>
+    immunisationStatus('2025-01-01', [], '2026-06-01', opts).find((d) => d.code === 'JE')!;
+  eq(je().state, 'not_yet', 'JE is not overdue outside an endemic area, 17 months on');
+  eq(je({ endemic: true }).state, 'overdue', 'JE IS overdue inside one');
+  // And a child who received it reads done either way -- the record survives
+  // the question being unanswered.
+  eq(immunisationStatus('2025-01-01', [{ vaccine_code: 'JE', dose_number: 1, administered_date: '2025-11-01' }],
+     '2026-06-01').find((d) => d.code === 'JE')!.state, 'done',
+     'a JE dose that WAS given still reads done with no endemic flag');
+  ok(!nextDue('2025-01-01', [], '2026-06-01')!.conditional,
+     'nextDue never names a conditional dose outside an endemic area');
   eq(translateLegacy('POLIO0'), { code: 'POLIO', dose: 1 }, 'POLIO0 is the birth drop, which is dose 1');
   eq(translateLegacy('POLIO3'), { code: 'POLIO', dose: 4 }, 'POLIO3 is dose 4, not dose 3');
   eq(translateLegacy('MR1'), { code: 'CAMPAK_R', dose: 1 }, 'MR1 is CAMPAK_R dose 1');
@@ -731,7 +768,10 @@ eq(planToFields(plan(['KEK']), 'en').t10, 'Next visit in 2 weeks', 'English is a
 
   // ── A DOSE WE CANNOT PLACE IS SHOWN, NEVER DROPPED ─────────────────────
   const odd = [
-    { vaccine_code: 'JE', dose_number: 1, administered_date: '2026-06-01' },
+    // Deliberately a vaccine Indonesia's routine schedule does not carry. This
+    // fixture used to say 'JE', which stopped being unknown the day the
+    // Ministry schedule was checked and JE was added -- the assertion caught it.
+    { vaccine_code: 'TIFOID', dose_number: 1, administered_date: '2026-06-01' },
     { vaccine_code: 'BCG', dose_number: null, administered_date: '2026-02-01' },
   ];
   eq(unmatchedGiven(odd).length, 2, 'an unknown vaccine and a dose with no number both surface');

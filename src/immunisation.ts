@@ -35,15 +35,32 @@
 // ANC, PNC and KN engines in this package only make where a clinician signed
 // the rule off.
 //
-// THE OFFSETS ARE CARRIED, NOT RECONSTRUCTED. They come from the Kemenkes 2023
-// schedule as it was already implemented in sahaibat-healthcare's Kasih module,
-// moved here unchanged. Treat the timings as inherited and unverified: they
-// have NOT had the review dr. Rathi gave the ANC, PNC and KN engines, and this
-// file should not be read as though they had.
+// ── THE OFFSETS WERE CARRIED, AND THREE OF THEM WERE WRONG ──────────────────
+//
+// They began as a copy of what sahaibat-healthcare's Kasih module had. Checked
+// against the Ministry of Health's published routine schedule (Imunisasi Rutin
+// Lengkap) on 21 Oct 2026, three disagreed:
+//
+//   OPV 1   Kasih gave it AT BIRTH alongside HB0. The published schedule gives
+//           it at ONE MONTH, with BCG. Birth is HB0 alone, within 24 hours.
+//   IPV 2   Kasih had it at 10 months. It belongs at 9, beside MR 1.
+//   JE      Missing entirely. Ten months is Japanese Encephalitis, and only in
+//           designated endemic areas -- see `conditional`.
+//
+// Had the first of those shipped, every child in the country would have read as
+// overdue for polio from the day she was born until her one-month visit.
+//
+// WHAT IS STILL UNREVIEWED: the schedule is now sourced, but the GRACE PERIOD
+// and the due/overdue boundary are this file's own choices, and no clinician
+// has signed them. They have not had the review dr. Rathi gave the ANC, PNC and
+// KN engines.
 
 /** A base vaccine code as the live records table stores it. */
 export type VaccineCode =
   | 'HB0' | 'BCG' | 'POLIO' | 'DPT_HB_HIB' | 'PCV' | 'RV' | 'IPV' | 'CAMPAK_R'
+  // Given at 10 months in DESIGNATED ENDEMIC AREAS only, so it is scheduled
+  // for every child and owed by very few. See `conditional`.
+  | 'JE'
   // School-age, delivered through the BIAS programme rather than at a posyandu.
   // No live row carries these yet -- they are scheduled by the Kasih tracker and
   // have never been recorded -- so they keep the tracker's spelling, which is
@@ -72,18 +89,30 @@ export interface ScheduledDose {
   due_day: number;
   window_id: string;
   window_en: string;
+  /* ── NOT DUE EVERYWHERE ────────────────────────────────────────────────
+     'endemic' means the dose applies only in areas the programme designates
+     -- Japanese Encephalitis is the one such vaccine in the routine schedule.
+     A caller that does not know whether it is in such an area MUST NOT read a
+     missing JE dose as a gap, which is why immunisationStatus() leaves these
+     out unless asked for them explicitly. Marking a whole district's children
+     overdue for a vaccine their programme does not offer would make the card
+     useless exactly where it needs to be trusted. */
+  conditional?: 'endemic';
 }
 
 /**
  * The schedule, earliest first.
  *
- * Polio is numbered FROM ONE here. The live table's POLIO dose 1 is the drop
- * given at birth, which the Kasih tracker calls POLIO0 -- see LEGACY_CODE_MAP.
+ * Polio is numbered FROM ONE here: OPV 1 at one month, then 2, 3 and 4 at two,
+ * three and four months. The Kasih tracker calls that first dose POLIO0 and
+ * places it at birth -- the name is translated by LEGACY_CODE_MAP and the
+ * timing is simply wrong, which is why this file and not that one is the
+ * schedule.
  */
 export const VACCINE_SCHEDULE: readonly ScheduledDose[] = [
-  { code: 'HB0',        dose: 1, label_id: 'Hepatitis B (HB0)',   label_en: 'Hepatitis B (birth dose)', category: 'dasar',    programme: 'rutin', due_day: 0,    window_id: 'Saat lahir',   window_en: 'At birth' },
-  { code: 'POLIO',      dose: 1, label_id: 'Polio tetes 1',        label_en: 'Oral polio 1',             category: 'dasar',    programme: 'rutin', due_day: 0,    window_id: 'Saat lahir',   window_en: 'At birth' },
+  { code: 'HB0',        dose: 1, label_id: 'Hepatitis B (HB0)',   label_en: 'Hepatitis B (birth dose)', category: 'dasar',    programme: 'rutin', due_day: 0,    window_id: 'Dalam 24 jam',  window_en: 'Within 24 hours' },
   { code: 'BCG',        dose: 1, label_id: 'BCG',                  label_en: 'BCG',                      category: 'dasar',    programme: 'rutin', due_day: 30,   window_id: '1 bulan',      window_en: '1 month' },
+  { code: 'POLIO',      dose: 1, label_id: 'Polio tetes (OPV) 1',  label_en: 'Oral polio (OPV) 1',       category: 'dasar',    programme: 'rutin', due_day: 30,   window_id: '1 bulan',      window_en: '1 month' },
 
   { code: 'DPT_HB_HIB', dose: 1, label_id: 'DPT-HB-Hib 1',         label_en: 'DTP-HepB-Hib 1',           category: 'dasar',    programme: 'rutin', due_day: 60,   window_id: '2 bulan',      window_en: '2 months' },
   { code: 'POLIO',      dose: 2, label_id: 'Polio tetes 2',        label_en: 'Oral polio 2',             category: 'dasar',    programme: 'rutin', due_day: 60,   window_id: '2 bulan',      window_en: '2 months' },
@@ -101,7 +130,9 @@ export const VACCINE_SCHEDULE: readonly ScheduledDose[] = [
   { code: 'RV',         dose: 3, label_id: 'Rotavirus 3',          label_en: 'Rotavirus 3',              category: 'dasar',    programme: 'rutin', due_day: 120,  window_id: '4 bulan',      window_en: '4 months' },
 
   { code: 'CAMPAK_R',   dose: 1, label_id: 'Campak-Rubela 1',      label_en: 'Measles-Rubella 1',        category: 'dasar',    programme: 'rutin', due_day: 270,  window_id: '9 bulan',      window_en: '9 months' },
-  { code: 'IPV',        dose: 2, label_id: 'IPV 2 (polio suntik)', label_en: 'IPV 2 (injected polio)',   category: 'dasar',    programme: 'rutin', due_day: 300,  window_id: '10 bulan',     window_en: '10 months' },
+  { code: 'IPV',        dose: 2, label_id: 'IPV 2 (polio suntik)', label_en: 'IPV 2 (injected polio)',   category: 'dasar',    programme: 'rutin', due_day: 270,  window_id: '9 bulan',      window_en: '9 months' },
+  // ENDEMIC AREAS ONLY. Never counted as a gap outside them -- see `conditional`.
+  { code: 'JE',         dose: 1, label_id: 'Japanese Encephalitis', label_en: 'Japanese Encephalitis',   category: 'dasar',    programme: 'rutin', due_day: 300,  window_id: '10 bulan',     window_en: '10 months', conditional: 'endemic' },
   { code: 'PCV',        dose: 3, label_id: 'PCV 3',                label_en: 'PCV 3',                    category: 'lanjutan', programme: 'rutin', due_day: 365,  window_id: '12 bulan',     window_en: '12 months' },
 
   { code: 'DPT_HB_HIB', dose: 4, label_id: 'DPT-HB-Hib lanjutan',  label_en: 'DTP-HepB-Hib booster',     category: 'lanjutan', programme: 'rutin', due_day: 548,  window_id: '18 bulan',     window_en: '18 months' },
@@ -231,6 +262,7 @@ export function immunisationStatus(
   dob: string | null | undefined,
   given: readonly GivenDose[] = [],
   today: string | Date = new Date(),
+  opts: { endemic?: boolean } = {},
 ): DoseStatus[] {
   const born = asDate(dob);
   const now = asDate(typeof today === 'string' ? today : today.toISOString()) ?? new Date().toISOString().slice(0, 10);
@@ -260,6 +292,14 @@ export function immunisationStatus(
     }
     const due = addDays(born, s.due_day);
     const diff = Math.round((Date.parse(now) - Date.parse(due)) / DAY);
+    /* A dose that only applies in a designated area is never reported as owed
+       unless the caller says it is in one. It stays in the list -- a child who
+       received it still reads 'done' above -- but an unanswered question must
+       not become a red badge for every child in a district the programme does
+       not cover. */
+    if (s.conditional && !opts.endemic) {
+      return { ...s, state: 'not_yet' as DoseState, due_date: due, days_from_due: diff };
+    }
     const state: DoseState = diff < 0 ? 'not_yet' : diff <= DUE_GRACE_DAYS ? 'due' : 'overdue';
     return { ...s, state, due_date: due, days_from_due: diff };
   });
@@ -292,9 +332,10 @@ export function nextDue(
   dob: string | null | undefined,
   given: readonly GivenDose[] = [],
   today: string | Date = new Date(),
+  opts: { endemic?: boolean } = {},
 ): DoseStatus | null {
   const rank: Record<DoseState, number> = { overdue: 0, due: 1, not_yet: 2, done: 3 };
-  const open = immunisationStatus(dob, given, today)
+  const open = immunisationStatus(dob, given, today, opts)
     .filter((d) => d.state !== 'done')
     .sort((a, b) => rank[a.state] - rank[b.state] || a.due_day - b.due_day);
   return open[0] ?? null;
@@ -305,8 +346,9 @@ export function immunisationSummary(
   dob: string | null | undefined,
   given: readonly GivenDose[] = [],
   today: string | Date = new Date(),
+  opts: { endemic?: boolean } = {},
 ): { done: number; due: number; overdue: number; not_yet: number; unmatched: number; total: number } {
-  const all = immunisationStatus(dob, given, today);
+  const all = immunisationStatus(dob, given, today, opts);
   const n = (s: DoseState) => all.filter((d) => d.state === s).length;
   return {
     done: n('done'), due: n('due'), overdue: n('overdue'), not_yet: n('not_yet'),
