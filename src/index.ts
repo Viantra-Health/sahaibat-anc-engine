@@ -55,3 +55,13 @@ export type {
   KbDueKind, KbDueState, KbDue, KbppWindow, KbEndReason,
   KbHormone, KbFormulationCode, KbCategoryScale, KbFormulation,
 } from './contraception';
+
+/* The conditions each formulation turns on, transcribed from the 2020 Pedoman
+   per-method pages, and which of them the record already answers. Assigns no
+   category: that needs the category tables, not these prose lists. */
+export {
+  KB_CONDITIONS, kbCondition, screeningFor, screeningComplete, hasScreening,
+} from './kbScreening';
+export type {
+  KbCondition, KbEvidenceKind, KbKnownFacts, KbScreening, KbScreeningItem,
+} from './kbScreening';
