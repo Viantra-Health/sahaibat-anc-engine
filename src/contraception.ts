@@ -381,3 +381,204 @@ export function switchedTo(
     });
   return after[0] ?? null;
 }
+
+/* ── FORMULASI: THE AXIS MEC ACTUALLY SCORES ON ─────────────────────────────
+ *
+ * KbMethodCode above answers "when is the next dose due", so it keys on the
+ * REPEAT INTERVAL. Medical eligibility keys on something else entirely --
+ * hormone content and route -- and the two axes do not line up:
+ *
+ *   `pil`      is one code and Kemenkes has TWO eligibility lists, KPK and KPP
+ *   `akdr`     is one code and Kemenkes has TWO, Copper and LNG
+ *   `suntik_3` is a 90-day interval; DMPA is 90 days and NET-EN is 60, and
+ *              both are progestin injectables with DIFFERENT late windows
+ *
+ * So a category attached to `pil` would have to pick one answer for two drugs
+ * with different safety profiles, and whichever it picked would be wrong half
+ * the time -- wearing a number that reads as authoritative.
+ *
+ * This is NOT a replacement vocabulary. The method codes stay exactly as they
+ * are, dueFor() is untouched, and every formulation names the method it
+ * belongs to. What this adds is the second axis, so a rule table has something
+ * addressable to hang off.
+ *
+ * ── SOURCE ─────────────────────────────────────────────────────────────────
+ *
+ * The names and the splits are Kemenkes' own, from Pedoman Pelayanan
+ * Kontrasepsi dan Keluarga Berencana (Direktorat Kesehatan Keluarga, 2020):
+ * AKDR Copper p42, AKDR-LNG p47, Implan p53, KSK p57, KSP p63, KPK p69,
+ * KPP p75, Kondom p80. Not invented here and not translated from WHO.
+ *
+ * TWO METHODS HAD NO CODE AT ALL and are added as formulations whose method is
+ * 'lainnya' until the method list itself grows: emergency contraception, which
+ * Kemenkes covers and which Klaster 3 p290 gives real dosing for, and
+ * fertility awareness, which the Pedoman p101 scores on its own A/C/D scale.
+ */
+
+export type KbHormone =
+  | 'kombinasi'     // estrogen + progestin -- what most MEC 3 and 4 turn on
+  | 'progestin'
+  | 'non_hormonal';
+
+export type KbFormulationCode =
+  | 'kpk'          // Kontrasepsi Pil Kombinasi
+  | 'kpp'          // Kontrasepsi Pil Progestin
+  | 'ksk'          // Kontrasepsi Suntik Kombinasi
+  | 'ksp_dmpa'     // Suntik Progestin, DMPA, 3-monthly
+  | 'ksp_neten'    // Suntik Progestin, NET-EN, 2-monthly
+  | 'implan'
+  | 'akdr_cu'      // AKDR Copper
+  | 'akdr_lng'     // AKDR levonorgestrel
+  | 'kondom_pria'
+  | 'kondom_wanita'
+  | 'mal'
+  | 'sms'          // Sadar Masa Subur / metode kalender
+  | 'mow'
+  | 'mop'
+  | 'kondar';      // Kontrasepsi Darurat
+
+/**
+ * Which category scale a formulation is scored on.
+ *
+ * Pedoman p101 is explicit that 1-4 does not apply to everything. Fertility
+ * awareness uses Accept / Caution / Delay, and the permanent methods add
+ * Special -- an experienced operator, full equipment and anaesthesia available.
+ * A single `category` column would be wrong for three of these.
+ */
+export type KbCategoryScale =
+  | 'mec_1_4'
+  | 'acd'          // A / C / D
+  | 'acds';        // A / C / D / S
+
+export interface KbFormulation {
+  code: KbFormulationCode;
+  /** The method code this belongs to. dueFor() still reads the method. */
+  method: KbMethodCode;
+  label_id: string;
+  label_en: string;
+  hormone: KbHormone;
+  scale: KbCategoryScale;
+  /**
+   * Days before the next dose, where it differs from the method's own.
+   *
+   * NET-EN is the reason this exists: it shares `suntik_3` with DMPA and
+   * repeats at 60 days rather than 90.
+   */
+  repeat_days?: number | null;
+  /**
+   * How late she can be and still simply be given the dose.
+   *
+   * Klaster 3 p290: 2 weeks for NET-EN, 4 weeks for DMPA. Past it, pregnancy
+   * is checked first. NOTE FOR WHOEVER VERIFIES THE TRANSCRIPTION: the first
+   * bullet on that page reads "< 2 minggu (NET-EN) atau > 4 minggu (DMPA)",
+   * where the second comparator must be "<" for the sentence to mean anything.
+   * The two thresholds are consistent across both bullets and are what is
+   * encoded; the stray ">" is recorded here rather than silently corrected.
+   */
+  late_window_days?: number | null;
+  /** Page in the 2020 Pedoman carrying this formulation's eligibility list. */
+  source_page?: number | null;
+}
+
+export const KB_FORMULATIONS: readonly KbFormulation[] = [
+  { code: 'kpk',        method: 'pil',      label_id: 'Pil Kombinasi (KPK)',        label_en: 'Combined oral pill',        hormone: 'kombinasi',    scale: 'mec_1_4', repeat_days: 28, source_page: 69 },
+  { code: 'kpp',        method: 'pil',      label_id: 'Pil Progestin (KPP)',        label_en: 'Progestin-only pill',       hormone: 'progestin',    scale: 'mec_1_4', repeat_days: 28, source_page: 75 },
+  { code: 'ksk',        method: 'suntik_1', label_id: 'Suntik Kombinasi (KSK)',     label_en: 'Combined injectable',       hormone: 'kombinasi',    scale: 'mec_1_4', repeat_days: 30, source_page: 57 },
+  { code: 'ksp_dmpa',   method: 'suntik_3', label_id: 'Suntik Progestin DMPA',      label_en: 'DMPA injectable',           hormone: 'progestin',    scale: 'mec_1_4', repeat_days: 90, late_window_days: 28, source_page: 63 },
+  { code: 'ksp_neten',  method: 'suntik_3', label_id: 'Suntik Progestin NET-EN',    label_en: 'NET-EN injectable',         hormone: 'progestin',    scale: 'mec_1_4', repeat_days: 60, late_window_days: 14, source_page: 63 },
+  { code: 'implan',     method: 'implan',   label_id: 'Implan',                     label_en: 'Implant',                   hormone: 'progestin',    scale: 'mec_1_4', source_page: 53 },
+  { code: 'akdr_cu',    method: 'akdr',     label_id: 'AKDR Copper',                label_en: 'Copper IUD',                hormone: 'non_hormonal', scale: 'mec_1_4', source_page: 42 },
+  { code: 'akdr_lng',   method: 'akdr',     label_id: 'AKDR-LNG',                   label_en: 'Levonorgestrel IUS',        hormone: 'progestin',    scale: 'mec_1_4', source_page: 47 },
+  { code: 'kondom_pria',   method: 'kondom', label_id: 'Kondom laki-laki',          label_en: 'Male condom',               hormone: 'non_hormonal', scale: 'mec_1_4', source_page: 80 },
+  { code: 'kondom_wanita', method: 'kondom', label_id: 'Kondom perempuan',          label_en: 'Female condom',             hormone: 'non_hormonal', scale: 'mec_1_4', source_page: 81 },
+  { code: 'mal',        method: 'mal',      label_id: 'MAL (Metode Amenore Laktasi)', label_en: 'Lactational amenorrhoea', hormone: 'non_hormonal', scale: 'mec_1_4' },
+  /* Its own scale, per Pedoman p101: no medical condition is worsened by
+     knowing when you are fertile, so the question is whether the method can be
+     used accurately rather than safely. */
+  { code: 'sms',        method: 'lainnya',  label_id: 'Sadar Masa Subur',           label_en: 'Fertility awareness',       hormone: 'non_hormonal', scale: 'acd' },
+  { code: 'mow',        method: 'mow',      label_id: 'MOW (Tubektomi)',            label_en: 'Female sterilisation',      hormone: 'non_hormonal', scale: 'acds' },
+  { code: 'mop',        method: 'mop',      label_id: 'MOP (Vasektomi)',            label_en: 'Male sterilisation',        hormone: 'non_hormonal', scale: 'acds' },
+  /* Not a continuing method and so not an episode in the usual sense. Carried
+     here because Kemenkes covers it, Klaster 3 p290 doses it, and a product
+     that cannot record it cannot record the visit where it mattered most. */
+  { code: 'kondar',     method: 'lainnya',  label_id: 'Kontrasepsi Darurat',        label_en: 'Emergency contraception',   hormone: 'progestin',    scale: 'mec_1_4' },
+];
+
+export function kbFormulation(code: unknown): KbFormulation | null {
+  const s = String(code ?? '').trim().toLowerCase();
+  return KB_FORMULATIONS.find((f) => f.code === s) ?? null;
+}
+
+/** Every formulation belonging to a method code. Empty for an unknown method. */
+export function formulationsFor(method: unknown): readonly KbFormulation[] {
+  const s = String(method ?? '').trim().toLowerCase();
+  return KB_FORMULATIONS.filter((f) => f.method === s);
+}
+
+/**
+ * Does this method need the clinician to say WHICH formulation?
+ *
+ * True only where the choice changes an answer: two eligibility lists, or two
+ * repeat intervals. `implan` returns false -- Kemenkes publishes one list for
+ * it -- which is why this reads the table rather than counting products.
+ */
+export function needsFormulation(method: unknown): boolean {
+  return formulationsFor(method).length > 1;
+}
+
+/**
+ * When the next dose is due, for a formulation rather than a method.
+ *
+ * The ONE case the method-level dueFor() cannot answer: a woman on NET-EN is
+ * due at 60 days and `suntik_3` says 90. Answering her from the method code
+ * would tell her she is a month early when she is on time.
+ *
+ * Falls through to dueFor() whenever the formulation adds nothing, so there is
+ * one implementation of the arithmetic and not two.
+ */
+export function dueForFormulation(
+  e: KbEpisodeFacts,
+  formulation: unknown,
+  today: string | Date = new Date(),
+): KbDue {
+  const base = dueFor(e, today);
+  const f = kbFormulation(formulation);
+  if (!f || f.repeat_days == null) return base;
+
+  // Only a REPEATING method with a different interval needs overriding. A
+  // device, a review method or an undatable episode is already answered.
+  const m = kbMethod(e.method_code);
+  if (m.device || m.review_days || !m.repeat_days) return base;
+  if (m.repeat_days === f.repeat_days) return base;
+  if (base.due_date == null) return base;
+
+  return dueForOverride(e, f, today);
+}
+
+function dueForOverride(e: KbEpisodeFacts, f: KbFormulation, today: string | Date): KbDue {
+  const now = asDate(typeof today === 'string' ? today : today.toISOString())
+    ?? new Date().toISOString().slice(0, 10);
+  const from = asDate(e.provided_at);
+  if (!from) return { kind: 'none', state: 'unknown', due_date: null, days_from_due: null, reason: 'no_service_date' };
+  const due = addDays(from, f.repeat_days as number);
+  const { state, days } = stateFor(due, now);
+  return { kind: f.method === 'pil' ? 'refill' : 'injection', state, due_date: due, days_from_due: days };
+}
+
+/**
+ * Is she late enough that pregnancy must be excluded before the next dose?
+ *
+ * Klaster 3 p288-290. Null where the formulation has no published window --
+ * which is most of them, and is not the same as "she is fine".
+ */
+export function lateDoseNeedsPregnancyCheck(
+  e: KbEpisodeFacts,
+  formulation: unknown,
+  today: string | Date = new Date(),
+): boolean | null {
+  const f = kbFormulation(formulation);
+  if (!f || f.late_window_days == null) return null;
+  const due = dueForFormulation(e, formulation, today);
+  if (due.due_date == null || due.days_from_due == null) return null;
+  return due.days_from_due > f.late_window_days;
+}

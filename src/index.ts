@@ -45,8 +45,13 @@ export {
   KB_METHODS, KB_GRACE_DAYS, KBPP_DAYS, KB_END_REASONS,
   kbMethod, isKnownMethod, nextStep, counselledWithoutChoosing,
   dueFor, kbppWindow, kbEndReason, switchedTo,
+  // The formulation axis. Medical eligibility keys on hormone content and
+  // route; the method codes above key on repeat interval. See contraception.ts.
+  KB_FORMULATIONS, kbFormulation, formulationsFor, needsFormulation,
+  dueForFormulation, lateDoseNeedsPregnancyCheck,
 } from './contraception';
 export type {
   KbMethodCode, KbMethodClass, KbMethod, KbEpisodeFacts, KbStep,
   KbDueKind, KbDueState, KbDue, KbppWindow, KbEndReason,
+  KbHormone, KbFormulationCode, KbCategoryScale, KbFormulation,
 } from './contraception';
