@@ -11,6 +11,7 @@
 
 import { parseAncInit, parseAncData, parsePncInit, calculateBMI } from '../src/parseBidanInput';
 import { score10T } from '../src/score10T';
+import { screeningFor } from '../src/kbScreening';
 import { generateClinicalFlags, shouldRefer } from '../src/clinicalFlags';
 import { parsePncData } from '../src/parseBidanInput';
 import { generatePncFlags, shouldReferPnc, kfForDay } from '../src/pncFlags';
@@ -907,6 +908,61 @@ eq(planToFields(plan(['KEK']), 'en').t10, 'Next visit in 2 weeks', 'English is a
   const api = Object.keys(contraception);
   ok(!api.some((k) => /mec|eligib|klop/i.test(k)),
      'the engine exposes NO eligibility verdict -- that needs a named clinical reviewer');
+}
+
+/* ── SCREENING ANSWERS THE RECORD ALREADY SETTLES ────────────────────────
+   Case K-13, 25 Oct 2026: a mother on the day she delivered was offered the
+   copper IUD with "Antara 48 jam dan 4 minggu pascasalin" reading "Belum
+   ditanyakan", the delivery date known on the same screen. These lock the
+   window, the precedence, and — most importantly — the two cases that must
+   STILL be asked, because a wrong derived answer is never queried. */
+{
+  const row = (f: string, k: any, code: string) =>
+    screeningFor(f, k).items.find((i: any) => i.condition.code === code);
+
+  const at = (d: string, t: string) => ({ deliveryDate: d, today: t });
+
+  eq(row('akdr_cu', at('2026-10-25', '2026-10-25'), 'pp_48h_4w')?.answer, false,
+     'day 0 is inside the first 48 hours, so the 48h-4wk row is NO, not unanswered');
+  eq(row('akdr_cu', at('2026-10-24', '2026-10-25'), 'pp_48h_4w')?.answer, false,
+     'day 1 is still inside the first 48 hours');
+  eq(row('akdr_cu', at('2026-10-23', '2026-10-25'), 'pp_48h_4w')?.answer, true,
+     'day 2 is the start of the window');
+  eq(row('akdr_cu', at('2026-09-28', '2026-10-25'), 'pp_48h_4w')?.answer, true,
+     'day 27 is the last day of the window');
+  eq(row('akdr_cu', at('2026-09-27', '2026-10-25'), 'pp_48h_4w')?.answer, false,
+     'day 28 is past four weeks');
+  eq(row('akdr_cu', at('2026-10-23', '2026-10-25'), 'pp_48h_4w')?.from, 'record',
+     'a derived answer says it came from the record, not from being asked');
+
+  // Her own answer outranks the arithmetic; a coded diagnosis outranks it too.
+  eq(row('akdr_cu', { ...at('2026-10-23', '2026-10-25'), answers: { pp_48h_4w: false } }, 'pp_48h_4w')?.from,
+     'answer', 'a recorded answer beats the computation -- she may overrule it');
+
+  // Nonsense in, nothing out.
+  eq(row('akdr_cu', at('2026-12-01', '2026-10-25'), 'pp_48h_4w')?.answer, null,
+     'a delivery date in the future derives nothing');
+  eq(row('akdr_cu', { deliveryDate: 'not-a-date', today: '2026-10-25' }, 'pp_48h_4w')?.answer, null,
+     'an unparseable delivery date derives nothing');
+  eq(row('akdr_cu', {}, 'pp_48h_4w')?.answer, null,
+     'no delivery date means the row is still asked');
+
+  // MISSING IS NOT NO. The two breastfeeding rows stay unanswered until the
+  // answer is recorded -- deriving them from silence is the exact mistake that
+  // makes a combined pill look permissible at three weeks postpartum.
+  eq(row('kpk', at('2026-10-02', '2026-10-25'), 'pp_lt_3w_no_bf')?.answer, null,
+     'breastfeeding unrecorded: the under-3-weeks row is NOT derived');
+  eq(row('kpk', { ...at('2026-10-02', '2026-10-25'), isBreastfeeding: false }, 'pp_lt_3w_no_bf')?.answer,
+     false, 'not breastfeeding at day 23 is past the 3-week row');
+  eq(row('kpk', { ...at('2026-10-20', '2026-10-25'), isBreastfeeding: false }, 'pp_lt_3w_no_bf')?.answer,
+     true, 'not breastfeeding at day 5 meets the under-3-weeks row');
+
+  // Left as questions ON PURPOSE -- "mainly" breastfeeding and an added VTE
+  // risk are not in the record, so neither may be guessed.
+  eq(row('kpk', { ...at('2026-08-20', '2026-10-25'), isBreastfeeding: true }, 'bf_6w_6m')?.answer, null,
+     '"mainly breastfeeding 6wk-6mo" is still asked -- a yes/no does not say "mainly"');
+  eq(row('kpk', { ...at('2026-10-01', '2026-10-25'), isBreastfeeding: false }, 'pp_3_6w_no_bf_vte')?.answer,
+     null, 'the 3-6 week VTE row is still asked -- nothing records the added risk');
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

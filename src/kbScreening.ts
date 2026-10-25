@@ -184,14 +184,86 @@ export interface KbKnownFacts {
   icd10?: readonly (string | null | undefined)[];
   /** Answers already recorded, by condition code. null = not asked. */
   answers?: Readonly<Record<string, boolean | null | undefined>>;
+  /**
+   * When she delivered, if the record knows. YYYY-MM-DD.
+   *
+   * Some conditions on these lists are not questions at all — they are
+   * arithmetic. "Between 48 hours and 4 weeks postpartum" is settled by a
+   * delivery date the app already holds, and asking a midwife to answer it by
+   * hand invites the one answer that is certainly wrong. Testing found exactly
+   * that: a mother on the day she delivered was offered the copper IUD with
+   * that row reading "Belum ditanyakan", delivery date known (case K-13,
+   * 25 Oct 2026).
+   */
+  deliveryDate?: string | null;
+  /**
+   * Is she breastfeeding? Three states, and null means NOT RECORDED.
+   *
+   * Two conditions combine the postpartum clock with this, and neither may be
+   * derived while it is unknown — "not recorded" would otherwise be read as
+   * "not breastfeeding", which is the exact mistake that makes a combined pill
+   * look permissible at three weeks.
+   */
+  isBreastfeeding?: boolean | null;
+  /** Reference date for the postpartum arithmetic. Defaults to today. */
+  today?: string | Date;
+}
+
+/**
+ * Conditions this engine can answer from the record instead of asking.
+ *
+ * DELIBERATELY SHORT. A derived answer that is wrong is worse than a question,
+ * because it is never queried. Only thresholds the condition's own label
+ * states outright are computed here:
+ *
+ *   pp_48h_4w         the date alone settles it, both ways
+ *   bf_lt_6w          date + an EXPLICIT breastfeeding answer
+ *   pp_lt_3w_no_bf    date + an EXPLICIT breastfeeding answer
+ *
+ * Two are left as questions on purpose. `bf_6w_6m` reads "MAINLY
+ * breastfeeding", and a yes/no field does not say whether feeding is mainly
+ * breast; `pp_3_6w_no_bf_vte` needs an added thrombosis risk that nothing in
+ * the record carries. Both would have to be guessed, so both are still asked.
+ */
+function derivedAnswers(known: KbKnownFacts): Map<string, { answer: boolean; why: string }> {
+  const out = new Map<string, { answer: boolean; why: string }>();
+  const raw = String(known.deliveryDate ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) return out;
+
+  const nowRaw = known.today ?? new Date();
+  const now = typeof nowRaw === 'string' ? nowRaw : nowRaw.toISOString().slice(0, 10);
+  const day = Math.round((Date.parse(now.slice(0, 10)) - Date.parse(raw.slice(0, 10))) / 86_400_000);
+  // A delivery date in the future is a typo, not a pregnancy. Derive nothing.
+  if (!Number.isFinite(day) || day < 0) return out;
+
+  const dayLabel = `hari ke-${day} pascasalin`;
+  /* The same window as categoryConditionsFrom in kbCategory.ts, and it must
+     stay the same: day 0-1 is the first 48 hours, which the Pedoman treats
+     separately, and day 28 onwards is past four weeks. */
+  out.set('pp_48h_4w', { answer: day >= 2 && day < 28, why: dayLabel });
+
+  const bf = known.isBreastfeeding;
+  if (bf === true || bf === false) {
+    const fed = bf ? 'menyusui' : 'tidak menyusui';
+    out.set('bf_lt_6w', { answer: bf === true && day < 42, why: `${dayLabel}, ${fed}` });
+    out.set('pp_lt_3w_no_bf', { answer: bf === false && day < 21, why: `${dayLabel}, ${fed}` });
+  }
+  return out;
 }
 
 export interface KbScreeningItem {
   condition: KbCondition;
   /** true/false where known, null where NOT ASKED. Never defaulted. */
   answer: boolean | null;
-  /** How this answer arrived. 'unanswered' when it has not. */
-  from: 'diagnosis' | 'answer' | 'unanswered';
+  /**
+   * How this answer arrived. 'unanswered' when it has not.
+   *
+   * 'record' means the engine worked it out from something already recorded —
+   * a delivery date, a breastfeeding answer — rather than anybody being asked.
+   * A screen must be able to say which, because "no" that was computed and
+   * "no" that a midwife gave are different claims.
+   */
+  from: 'diagnosis' | 'answer' | 'record' | 'unanswered';
   /** The coded diagnosis that established it, when one did. */
   via?: string;
 }
@@ -244,6 +316,7 @@ export function screeningFor(
 
   const icd = known.icd10 ?? [];
   const answers = known.answers ?? {};
+  const derived = derivedAnswers(known);
   const items: KbScreeningItem[] = [];
 
   for (const code of codes.conditions) {
@@ -257,6 +330,15 @@ export function screeningFor(
     const hit = icdMatches(c, icd);
     if (hit) {
       items.push({ condition: c, answer: true, from: 'diagnosis', via: hit });
+      continue;
+    }
+    /* After a recorded answer and a coded diagnosis, never before: a midwife
+       who answered this herself has overridden the arithmetic deliberately,
+       and a coded diagnosis is a clinician's assertion. Computation is the
+       last resort, not the first. */
+    const calc = derived.get(code);
+    if (calc) {
+      items.push({ condition: c, answer: calc.answer, from: 'record', via: calc.why });
       continue;
     }
     items.push({ condition: c, answer: null, from: 'unanswered' });
