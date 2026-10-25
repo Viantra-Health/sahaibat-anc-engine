@@ -484,8 +484,26 @@ export const KB_FORMULATIONS: readonly KbFormulation[] = [
   { code: 'kpk',        method: 'pil',      label_id: 'Pil Kombinasi (KPK)',        label_en: 'Combined oral pill',        hormone: 'kombinasi',    scale: 'mec_1_4', repeat_days: 28, source_page: 69 },
   { code: 'kpp',        method: 'pil',      label_id: 'Pil Progestin (KPP)',        label_en: 'Progestin-only pill',       hormone: 'progestin',    scale: 'mec_1_4', repeat_days: 28, source_page: 75 },
   { code: 'ksk',        method: 'suntik_1', label_id: 'Suntik Kombinasi (KSK)',     label_en: 'Combined injectable',       hormone: 'kombinasi',    scale: 'mec_1_4', repeat_days: 30, source_page: 57 },
-  { code: 'ksp_dmpa',   method: 'suntik_3', label_id: 'Suntik Progestin DMPA',      label_en: 'DMPA injectable',           hormone: 'progestin',    scale: 'mec_1_4', repeat_days: 90, late_window_days: 28, source_page: 63 },
-  { code: 'ksp_neten',  method: 'suntik_3', label_id: 'Suntik Progestin NET-EN',    label_en: 'NET-EN injectable',         hormone: 'progestin',    scale: 'mec_1_4', repeat_days: 60, late_window_days: 14, source_page: 63 },
+  /* ── 84 AND 56, NOT 90 AND 60 ──────────────────────────────────────────
+     Corrected 24 Oct 2026. These were first encoded as 90 and 60 from the
+     Pedoman p62, which states the schedule in MONTHS: DMPA "setiap 3 bulan",
+     NET-EN "setiap 2 bulan". Klaster 3 p289 states the same schedule in WEEKS
+     and with the dose -- DMPA IM 150 mg 12 mingguan, NET-EN IM 200 mg 8
+     mingguan -- and weeks is what a dose interval actually is.
+
+     The difference is not pedantry. "Three months" is 89, 90, 91 or 92 days
+     depending on which month she was injected in, so a due date computed from
+     it drifts by up to six days across a year; twelve weeks is 84 days
+     always. The late windows on p290 (2 weeks NET-EN, 4 weeks DMPA) are
+     stated against the weekly schedule and only line up with it.
+
+     KB_METHODS.suntik_3 KEEPS 90. That is the method-level approximation the
+     programme itself uses when it says "suntik 3 bulan", every existing
+     episode was computed against it, and changing it would silently move
+     every historical due date. The precise interval belongs on the
+     formulation -- which is what this axis is for. */
+  { code: 'ksp_dmpa',   method: 'suntik_3', label_id: 'Suntik Progestin DMPA',      label_en: 'DMPA injectable',           hormone: 'progestin',    scale: 'mec_1_4', repeat_days: 84, late_window_days: 28, source_page: 63 },
+  { code: 'ksp_neten',  method: 'suntik_3', label_id: 'Suntik Progestin NET-EN',    label_en: 'NET-EN injectable',         hormone: 'progestin',    scale: 'mec_1_4', repeat_days: 56, late_window_days: 14, source_page: 63 },
   { code: 'implan',     method: 'implan',   label_id: 'Implan',                     label_en: 'Implant',                   hormone: 'progestin',    scale: 'mec_1_4', source_page: 53 },
   { code: 'akdr_cu',    method: 'akdr',     label_id: 'AKDR Copper',                label_en: 'Copper IUD',                hormone: 'non_hormonal', scale: 'mec_1_4', source_page: 42 },
   { code: 'akdr_lng',   method: 'akdr',     label_id: 'AKDR-LNG',                   label_en: 'Levonorgestrel IUS',        hormone: 'progestin',    scale: 'mec_1_4', source_page: 47 },

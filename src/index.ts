@@ -65,3 +65,16 @@ export {
 export type {
   KbCondition, KbEvidenceKind, KbKnownFacts, KbScreening, KbScreeningItem,
 } from './kbScreening';
+
+/* Starting, continuing and comparing — Klaster 3 p288-290 and the Pedoman.
+   Kemenkes has published the operative version of what H1 called the WHO SPR
+   layer, so none of this is translated from WHO. */
+export {
+  startAdvice, missedDose, missedProgestinPill, emergencyContraception,
+  followUpSchedule, postpartumRestriction,
+  methodFacts, compareMethods, comparableFormulations,
+} from './kbPractice';
+export type {
+  StartAdvice, MissedAction, MissedDoseAdvice, EmergencyAdvice,
+  PostpartumVerdict, MethodFacts,
+} from './kbPractice';
