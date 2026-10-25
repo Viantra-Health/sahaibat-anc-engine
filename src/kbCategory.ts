@@ -250,6 +250,46 @@ export function categoryConditions(codes: readonly string[]): string[] {
   return codes.map((c) => ALIASES[c] ?? c);
 }
 
+/**
+ * Category conditions from ALL her clinical facts, not just the screening.
+ *
+ * ── THE BUG THIS EXISTS TO FIX ─────────────────────────────────────────────
+ *
+ * Found in end-to-end testing, 24 Oct 2026, and it was the dangerous
+ * direction. The verdict was built only from screening answers, and
+ * `pp_48h_4w` appears on the COPPER IUD screening list and no other — so for
+ * a woman 23 days postpartum the combined pill came back "recommended,
+ * category 2" when the p104 table scores that row KIK 4.
+ *
+ * Two of four methods changed once the postpartum row was included, both
+ * toward not-recommended. A screening list says which conditions a given
+ * method's own page discusses; it is NOT the list of facts true about her.
+ * The category table is indexed by condition, not by method, so every row
+ * that applies to her applies to every method.
+ *
+ * `today` defaults to now. A null delivery date simply contributes nothing.
+ */
+export function categoryConditionsFrom(facts: {
+  screeningPresent?: readonly string[];
+  deliveryDate?: string | null;
+  today?: string | Date;
+}): string[] {
+  const out = new Set(categoryConditions(facts.screeningPresent ?? []));
+
+  const d = String(facts.deliveryDate ?? '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) {
+    const nowRaw = facts.today ?? new Date();
+    const now = typeof nowRaw === 'string' ? nowRaw : nowRaw.toISOString().slice(0, 10);
+    const day = Math.round((Date.parse(now.slice(0, 10)) - Date.parse(d.slice(0, 10))) / 86_400_000);
+    /* 48 hours to under 4 weeks, as the row is labelled. Day 0 and 1 are
+       outside it -- the Pedoman treats the first 48 hours separately -- and so
+       is day 28 onwards. */
+    if (day >= 2 && day < 28) out.add('pp_48h_4w');
+  }
+
+  return [...out];
+}
+
 /* ── THE FACILITY TIER ─────────────────────────────────────────────────── */
 
 export type FacilityTier = 'lengkap' | 'terbatas';
