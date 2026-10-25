@@ -93,7 +93,7 @@ export type { ProvisionKind, ProvisionRequirement } from './kbProvision';
    else answers 'unknown'. */
 export {
   CATEGORY_ROWS, columnFor, isRecommended, worstCategory, verdictFor,
-  displayCategory, AFTER_SCREENING,
+  displayCategory, AFTER_SCREENING, categoryConditions,
 } from './kbCategory';
 export type {
   KbCategory, KbMethodColumn, CategoryRow, Verdict, MethodVerdict, FacilityTier,

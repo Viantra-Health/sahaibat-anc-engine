@@ -218,6 +218,38 @@ export function verdictFor(
   };
 }
 
+/* ── FROM THE SCREENING'S VOCABULARY TO THE TABLE'S ────────────────────── */
+
+/**
+ * The screening and the category table name some conditions differently.
+ *
+ * kbScreening's codes come from the per-method prose lists; these come from
+ * the p104 table's row labels, and the two were written by the same ministry
+ * at different levels of detail. Two of the three already match exactly
+ * (htn_160_100, pp_48h_4w); the table's row is simply "DM" where the prose
+ * list says "diabetes over 20 years, or with vascular damage".
+ *
+ * THE ALIAS GOES ONLY ONE WAY, from the narrower prose condition to the
+ * broader table row. A client whose record says long-standing diabetes is
+ * covered by the DM row; the reverse does not hold, and nothing here infers
+ * the prose condition from the table.
+ */
+const ALIASES: Record<string, string> = {
+  diabetes_20y_or_damage: 'diabetes',
+};
+
+/**
+ * Which category rows these screening conditions correspond to.
+ *
+ * Unmapped codes are RETURNED AS THEY ARE rather than dropped, so verdictFor()
+ * counts them as unscored and the verdict goes to 'unknown'. Dropping them
+ * would quietly shrink her condition list and produce a confident answer
+ * about a woman whose other conditions were never considered.
+ */
+export function categoryConditions(codes: readonly string[]): string[] {
+  return codes.map((c) => ALIASES[c] ?? c);
+}
+
 /* ── THE FACILITY TIER ─────────────────────────────────────────────────── */
 
 export type FacilityTier = 'lengkap' | 'terbatas';
