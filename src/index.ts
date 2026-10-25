@@ -86,3 +86,15 @@ export {
   provisionRequirement, canProvideHere, PROVISION_KINDS, PROVISION_LABELS,
 } from './kbProvision';
 export type { ProvisionKind, ProvisionRequirement } from './kbProvision';
+
+/* The category scale, the facility-tier display, and the aggregation rule —
+   all from the Pedoman. The MATRIX is not here: it lives on the Roda KLOP
+   wheel, so only the three rows the book prints are carried and everything
+   else answers 'unknown'. */
+export {
+  CATEGORY_ROWS, columnFor, isRecommended, worstCategory, verdictFor,
+  displayCategory, AFTER_SCREENING,
+} from './kbCategory';
+export type {
+  KbCategory, KbMethodColumn, CategoryRow, Verdict, MethodVerdict, FacilityTier,
+} from './kbCategory';
