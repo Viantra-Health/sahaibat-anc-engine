@@ -965,6 +965,46 @@ eq(planToFields(plan(['KEK']), 'en').t10, 'Next visit in 2 weeks', 'English is a
      null, 'the 3-6 week VTE row is still asked -- nothing records the added risk');
 }
 
+/* ── SEVERE HYPERTENSION IN PREGNANCY (case A-09) ────────────────────────
+   160/110 with nothing else used to produce the same yellow "monitor closely"
+   as 141/91, while the product's own postpartum rule called the identical
+   reading an emergency. These lock the band, the precedence, and — the part
+   that actually matters — that NOTHING which referred before stopped. */
+{
+  const bp = (sys: number | null, dia: number | null, extra: any = {}) =>
+    shouldRefer(generateClinicalFlags({ bpSystolic: sys, bpDiastolic: dia, ...extra } as any));
+  const types = (sys: number | null, dia: number | null, extra: any = {}) =>
+    generateClinicalFlags({ bpSystolic: sys, bpDiastolic: dia, ...extra } as any).map((f: any) => f.type);
+
+  eq(bp(160, 110).urgency, 'emergency', '160/110 alone refers as an emergency');
+  eq(bp(160, 90).urgency,  'emergency', 'systolic 160 alone is severe');
+  eq(bp(140, 110).urgency, 'emergency', 'diastolic 110 alone is severe');
+  eq(bp(180, 120).urgency, 'emergency', '180/120 refers');
+
+  // The boundary, both sides.
+  eq(bp(159, 109).refer, false, '159/109 is below the severe band and does not refer');
+  eq(types(159, 109).includes('HYPERTENSION'), true, '159/109 still warns');
+  eq(bp(141, 91).refer,  false, '141/91 is raised, not severe — unchanged');
+  eq(bp(110, 70).refer,  false, 'a normal pressure refers nothing');
+
+  // NOTHING THAT REFERRED BEFORE MAY STOP. A severe reading WITH proteinuria is
+  // pre-eclampsia and must keep naming the condition, not be replaced by the
+  // less specific severe-pressure message.
+  eq(types(170, 115, { labProtein: '+++' }).includes('PRE_ECLAMPSIA'), true,
+     'severe BP + proteinuria is still PRE_ECLAMPSIA, not downgraded to SEVERE_HYPERTENSION');
+  eq(types(170, 115, { labProtein: '+++' }).includes('SEVERE_HYPERTENSION'), false,
+     'and the two do not both fire, which would refer the same woman twice');
+  eq(bp(145, 95, { labProtein: '+' }).urgency, 'emergency',
+     'mild BP with proteinuria still refers — the triad is untouched');
+  eq(bp(145, 95, { complaints: 'sakit kepala hebat' }).urgency, 'emergency',
+     'mild BP with pre-eclampsia symptoms still refers');
+
+  // Missing is not a reading. Number(null) is 0, and 0 is not severe.
+  eq(bp(null, null).refer, false, 'no blood pressure recorded refers nothing');
+  eq(types(null, null).some((t: string) => t === 'SEVERE_HYPERTENSION' || t === 'HYPERTENSION'), false,
+     'an unrecorded pressure raises no pressure flag at all');
+}
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 if (failures.length) {
   for (const f of failures) console.error(`  ✗ ${f}`);

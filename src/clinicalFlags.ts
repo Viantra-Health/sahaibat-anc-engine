@@ -71,10 +71,52 @@ export function generateClinicalFlags(data: AncClinicalInput): ClinicalFlag[] {
   const peSymptoms = ['sakit kepala','headache','pandangan kabur','blurred','oedema','bengkak','kejang','seizure']
     .some(s => cl.includes(s));
 
+  /* ── THE SEVERE BAND ────────────────────────────────────────────────────
+     WHERE THIS NUMBER COMES FROM, because it is not from the books this
+     project holds and nobody should later assume it was.
+
+     The three Kemenkes sources here give NO blood-pressure-alone referral
+     threshold for pregnancy:
+
+       Klaster 2 p126-127 (Panduan Praktik Klinik Dokter di FKTP, 2023) gives
+         the pre-eclampsia triad — >=20 weeks, >=140/90, proteinuria >=+2 —
+         and refers on the triad, not on a pressure.
+       Klaster 2 p42 is "Skrining Preeklampsia pada usia kehamilan < 20
+         minggu": a RISK tool where MAP > 90 mmHg is one MODERATE factor and
+         two are needed to refer. Its own note says MAP is computed before 20
+         weeks, so it does not govern a reading at 28.
+       Klaster 2 p43 covers pregnancy over 20 weeks and is the Buku KIA chart,
+         red lines at 130 systolic and 80 diastolic, footnoted "MAP > 90 mmHg
+         Rujuk" — which taken literally refers a woman at 120/80 (MAP 93).
+
+     So 160/110 is ours. It is taken from TWO places that are not those books:
+     this product's own postpartum rule in pncFlags.ts, which has treated
+     >=160/110 as an emergency since it was written, and international
+     consensus on severe hypertension in pregnancy.
+
+     THE ASYMMETRY IS WHY. Before this, the product called 160/110 critical the
+     day after delivery and "monitor closely" the day before, and that is not
+     defensible in either direction. Raised with the measurements after test
+     case A-09, deferred once, then decided by Sanjib on 2026-10-25.
+
+     It only ever ADDS sensitivity: every reading that referred before still
+     refers, and this catches severe readings that carried no proteinuria —
+     which is the common case, because proteinuria is frequently not measured
+     at the visit where a severe pressure is found. */
+  const severeBP = (data.bpSystolic ?? 0) >= 160 || (data.bpDiastolic ?? 0) >= 110;
+
   if (highBP && (proteinuria || peSymptoms)) {
     flags.push({ type: 'PRE_ECLAMPSIA', severity: 'EMERGENCY', referral: true,
       message_id: '🔴 RISIKO PRE-EKLAMPSIA — TD tinggi + proteinuria/gejala. RUJUK ke PONED/PONEK hari ini.',
       message_en: '🔴 PRE-ECLAMPSIA RISK — High BP + proteinuria/symptoms. REFER to PONED/PONEK today.' });
+  } else if (severeBP) {
+    /* Second, not first: a severe pressure WITH proteinuria or symptoms is
+       pre-eclampsia and must keep saying so — that message names the condition
+       and the destination, and this one would have replaced it with a less
+       specific warning. */
+    flags.push({ type: 'SEVERE_HYPERTENSION', severity: 'EMERGENCY', referral: true,
+      message_id: `🔴 HIPERTENSI BERAT — TD ${data.bpSystolic ?? '?'}/${data.bpDiastolic ?? '?'} mmHg. RUJUK ke PONED/PONEK hari ini, jangan tunggu protein urine.`,
+      message_en: `🔴 SEVERE HYPERTENSION — BP ${data.bpSystolic ?? '?'}/${data.bpDiastolic ?? '?'} mmHg. REFER to PONED/PONEK today; do not wait for a urine protein.` });
   } else if (highBP) {
     flags.push({ type: 'HYPERTENSION', severity: 'WARNING', referral: false,
       message_id: '🟡 HIPERTENSI — TD meningkat. Pantau ketat, periksa protein urine.',
