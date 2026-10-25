@@ -78,3 +78,11 @@ export type {
   StartAdvice, MissedAction, MissedDoseAdvice, EmergencyAdvice,
   PostpartumVerdict, MethodFacts,
 } from './kbPractice';
+
+/* What providing a method REQUIRES. There is deliberately no facility-level
+   table: KMK 2015/2023 governs which level may do what and we do not hold it,
+   so the engine states the requirement and the clinic states what it has. */
+export {
+  provisionRequirement, canProvideHere, PROVISION_KINDS, PROVISION_LABELS,
+} from './kbProvision';
+export type { ProvisionKind, ProvisionRequirement } from './kbProvision';
