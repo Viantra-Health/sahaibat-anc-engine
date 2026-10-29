@@ -267,6 +267,39 @@ ok(hasP(pnc({ temperatureC: 37.6 }), 'LOW_GRADE_FEVER'), '37.6 → low grade, wa
 ok(hasP(pnc({ temperatureC: 35.0 }), 'HYPOTHERMIA'), 'hypothermia is also sepsis');
 eq(shouldReferPnc(pnc({ temperatureC: 38.2 })).urgency, 'emergency', 'fever refers as emergency');
 
+// ── the shock pair, and the uterus ──────────────────────────────────────────
+// Added from published standards (Buku Acuan Nasional / WHO MCPC for shock,
+// Asuhan Persalinan Normal for atony) rather than from a reviewer.
+ok(hasP(pnc({ pulseBpm: 112 }), 'TACHYCARDIA_SHOCK'), 'pulse 112 → shock, refers');
+eq(shouldReferPnc(pnc({ pulseBpm: 112 })).urgency, 'emergency', 'pulse 112 refers as emergency');
+ok(hasP(pnc({ pulseBpm: 104 }), 'TACHYCARDIA'), 'pulse 104 → above normal, warns');
+ok(!hasP(pnc({ pulseBpm: 104 }), 'TACHYCARDIA_SHOCK'), 'pulse 104 is not yet the shock sign');
+ok(!shouldReferPnc(pnc({ pulseBpm: 104 })).refer, 'a rate of 104 alone does not refer');
+ok(!hasP(pnc({ pulseBpm: 98 }), 'TACHYCARDIA'), '98 is inside the normal range');
+// 110 is the boundary and belongs to the shock tier, not below it.
+ok(hasP(pnc({ pulseBpm: 110 }), 'TACHYCARDIA_SHOCK'), '110 is the shock threshold itself');
+// A pulse nobody took must not read as a normal one.
+ok(!hasP(pnc({ pulseBpm: null }), 'TACHYCARDIA'), 'an unrecorded pulse raises nothing');
+ok(!hasP(pnc({ pulseBpm: 0 }), 'TACHYCARDIA'), 'a zero pulse is a missing reading, not a rate');
+
+ok(hasP(pnc({ uterineTone: 'boggy' }), 'UTERINE_ATONY'), 'a soft uterus → atony');
+eq(shouldReferPnc(pnc({ uterineTone: 'boggy' })).urgency, 'emergency', 'atony refers as emergency');
+// EMERGENCY WITHOUT VISIBLE BLOOD. An atonic uterus fills before it spills, so
+// the flag must not depend on the bleeding field having been answered.
+ok(hasP(pnc({ uterineTone: 'boggy', bleeding: 'normal' }), 'UTERINE_ATONY'),
+   'atony stands even when the bleeding recorded is not heavy');
+ok(!hasP(pnc({ uterineTone: 'firm' }), 'UTERINE_ATONY'), 'a firm uterus raises nothing');
+ok(!hasP(pnc({ uterineTone: null }), 'UTERINE_ATONY'), 'an unrecorded tone is not a soft one');
+
+// The picture that started this: falling pressure, rising pulse, soft uterus,
+// heavy bleeding — all four at once, on one observation.
+{
+  const f = pnc({ bpSystolic: 85, bpDiastolic: 55, pulseBpm: 118, uterineTone: 'boggy', bleeding: 'high' });
+  ok(hasP(f, 'PPH') && hasP(f, 'HYPOTENSION_SHOCK') && hasP(f, 'TACHYCARDIA_SHOCK') && hasP(f, 'UTERINE_ATONY'),
+     'the kala IV haemorrhage raises all four flags');
+  eq(shouldReferPnc(f).urgency, 'emergency', 'and refers as an emergency');
+}
+
 // The whole point of the decimal fix, end to end: 38,5 must not become 38.0's
 // neighbour 38 by truncation — and must not become "no fever" either.
 eq(parsePncData('suhu 38,5').temperatureC, 38.5, 'PNC: comma decimal on temperature');

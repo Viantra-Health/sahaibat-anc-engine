@@ -24,6 +24,18 @@
 // already caused one consuming app to hold the rules back — so if a threshold
 // here changes, change this note with it.
 //
+// ADDED Oct 2026, FROM PUBLISHED STANDARDS RATHER THAN A REVIEWER:
+// TACHYCARDIA / TACHYCARDIA_SHOCK and UTERINE_ATONY. These were added at the
+// product owner's explicit instruction to encode standard protocol rather than
+// a single clinician's opinion, and each carries its source in the comment
+// beside it — the shock pair (pulse ≥ 110 with systolic < 90) as the Buku Acuan
+// Nasional and WHO MCPC describe it, and uterine atony as Asuhan Persalinan
+// Normal defines it, by the finding itself rather than by a number.
+//
+// They have NOT been through dr. Rathi. That is the intended difference, not an
+// omission: their authority is the published standard, and anyone revising them
+// should go back to those books rather than to a person.
+//
 // Severity means: EMERGENCY = refer now. WARNING = act, may not need referral.
 // INFO = record it. `referral` is separate from severity on purpose — mild
 // anaemia is a WARNING that does not refer, and the same distinction holds here.
@@ -36,6 +48,22 @@ export interface PncClinicalInput {
   bpDiastolic?: number | null;
   temperatureC?: number | null;
   bleeding?: 'none' | 'normal' | 'high' | null;
+  /**
+   * Maternal pulse, beats per minute.
+   *
+   * Read together with bpSystolic below: a rising pulse and a falling pressure
+   * are the same event seen twice, and in a haemorrhage the pulse moves first.
+   */
+  pulseBpm?: number | null;
+  /**
+   * Whether the uterus is contracted.
+   *
+   * 'boggy' is a uterus that is soft / not contracting — the single commonest
+   * cause of postpartum haemorrhage. null is UNKNOWN and is never read as
+   * reassurance: a tone nobody recorded must not produce a flag saying it was
+   * fine.
+   */
+  uterineTone?: 'firm' | 'boggy' | null;
   lochiaFoul?: boolean | null;
   woundInfected?: boolean | null;
   breastfeedingEstablished?: boolean | null;
@@ -149,6 +177,66 @@ export function generatePncFlags(data: PncClinicalInput): ClinicalFlag[] {
       type: 'HYPOTENSION_SHOCK', severity: 'EMERGENCY', referral: true,
       message_id: `🔴 TEKANAN DARAH RENDAH — ${sys}/${dia ?? '?'}. Curiga syok/perdarahan. RUJUK SEGERA.`,
       message_en: `🔴 LOW BLOOD PRESSURE — ${sys}/${dia ?? '?'}. Suspect shock/haemorrhage. REFER NOW.`,
+    });
+  }
+
+  // ═══ PULSE ═══════════════════════════════════════════════════════════════
+  // THE OTHER HALF OF THE SHOCK PAIR ABOVE.
+  //
+  // The standard description of shock in obstetric practice — the one carried
+  // by the Buku Acuan Nasional Pelayanan Kesehatan Maternal dan Neonatal and by
+  // WHO's Managing Complications in Pregnancy and Childbirth — is a fast, weak
+  // pulse at or above 110 together with a systolic below 90. This engine has
+  // read the systolic half since it was written and had no field for the pulse,
+  // so half of a two-sign definition was being evaluated.
+  //
+  // The pulse half matters more in the hour after birth, not less: a healthy
+  // woman compensates for blood loss by raising her rate, and her pressure
+  // holds until it suddenly does not. Treating the pulse as the earlier signal
+  // is the whole reason the pair is stated as a pair.
+  //
+  // 100 is the top of the normal adult range, so 100–109 is a rate that has
+  // left normal without yet meeting the shock description — reported, not
+  // referred on its own.
+  const pulse = data.pulseBpm;
+  if (pulse != null && pulse > 0) {
+    if (pulse >= 110) {
+      flags.push({
+        type: 'TACHYCARDIA_SHOCK', severity: 'EMERGENCY', referral: true,
+        message_id: `🔴 NADI CEPAT — ${pulse} x/menit. Tanda syok, curiga perdarahan. RUJUK SEGERA. Pasang infus, dampingi ibu.`,
+        message_en: `🔴 FAST PULSE — ${pulse} bpm. A sign of shock, suspect haemorrhage. REFER NOW. IV line, do not leave her.`,
+      });
+    } else if (pulse > 100) {
+      flags.push({
+        type: 'TACHYCARDIA', severity: 'WARNING', referral: false,
+        message_id: `🟡 NADI DI ATAS NORMAL — ${pulse} x/menit. Ulangi pengukuran, nilai perdarahan dan kontraksi uterus.`,
+        message_en: `🟡 PULSE ABOVE NORMAL — ${pulse} bpm. Repeat it, and check bleeding and uterine tone.`,
+      });
+    }
+  }
+
+  // ═══ UTERINE TONE ════════════════════════════════════════════════════════
+  // ATONIA UTERI.
+  //
+  // A uterus that is not contracting after birth is the commonest cause of
+  // postpartum haemorrhage, and it is the one cause that can be reversed with
+  // two hands and no equipment. Asuhan Persalinan Normal states the trigger as
+  // a finding rather than as a number: after the placenta is delivered the
+  // fundus is massaged, and a uterus that has not become firm within fifteen
+  // seconds of massage is managed as atonia uteri. That is this field — a
+  // midwife recording a soft uterus has made exactly that finding.
+  //
+  // So there is no threshold to invent here, which is why this rule can be
+  // stated at all: the standard's own trigger is the observation itself.
+  //
+  // EMERGENCY even when she is not visibly bleeding. An atonic uterus fills
+  // before it spills, and waiting for the blood to appear is waiting for the
+  // loss to be a litre rather than the half it already is.
+  if (data.uterineTone === 'boggy') {
+    flags.push({
+      type: 'UTERINE_ATONY', severity: 'EMERGENCY', referral: true,
+      message_id: '🔴 UTERUS TIDAK BERKONTRAKSI (ATONIA UTERI) — masase fundus sekarang, kosongkan kandung kemih, oksitosin, pasang infus. Bila tetap lembek: KBI dan RUJUK SEGERA.',
+      message_en: '🔴 UTERUS NOT CONTRACTING (UTERINE ATONY) — massage the fundus now, empty the bladder, oxytocin, IV line. If it stays soft: bimanual compression and REFER NOW.',
     });
   }
 
